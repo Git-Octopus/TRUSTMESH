@@ -1,8 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const verifierController = require('../controllers/verifierController');
+const authMiddleware = require('../middleware/auth');
+const requireRole = require('../middleware/requireRole');
 
+// Public list of authorized verifiers
 router.get('/', verifierController.getVerifiers);
-router.post('/', verifierController.addVerifier);
+
+// Admin-only verifier registration
+router.post('/', authMiddleware, requireRole('admin'), verifierController.addVerifier);
 
 module.exports = router;
