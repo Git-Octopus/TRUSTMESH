@@ -1,14 +1,138 @@
-exports.getProfile = async (req, res, next) => {
+const Profile = require('../models/Profile');
+const User = require('../models/User');
+const Claim = require('../models/Claim');
+const { calculateProfileTrustScore } = require('../services/trustScoreService');
+
+/**
+ * Create or initialize profile for authenticated user.
+ * POST /api/profile
+ */
+exports.createProfile = async (req, res, next) => {
   try {
-    res.status(200).json({ profile: {} });
+    const userId = req.user._id || req.user.id;
+    const { headline, bio, education, skills, experience, profileImage, name } = req.body;
+
+    let profile = await Profile.findOne({ userId });
+    if (profile) {
+      return res.status(400).json({
+        success: false,
+        message: 'Profile already exists for this user. Use PUT /api/profile to update.',
+        profile,
+      });
+    }
+
+    profile = await Profile.create({
+      userId,
+      headline: headline || '',
+      bio: bio || '',
+      education: education || [],
+      skills: skills || [],
+      experience: experience || [],
+      profileImage: profileImage || '',
+    });
+
+    if (name) {
+      await User.findByIdAndUpdate(userId, { name });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Profile created successfully.',
+      profile,
+    });
   } catch (error) {
     next(error);
   }
 };
 
+/**
+ * Get public profile by wallet address.
+ * GET /api/profile/:wallet
+ */
+exports.getProfileByWallet = async (req, res, next) => {
+  try {
+    const { wallet } = req.params;
+    if (!wallet) {
+      return res.status(400).json({
+        success: false,
+        message: 'Wallet address parameter is required.',
+      });
+    }
+
+    const user = await User.findOne({
+      walletAddress: wallet.toLowerCase().trim(),
+    }).select('-nonce');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'No profile found for this wallet address.',
+      });
+    }
+
+    let profile = await Profile.findOne({ userId: user._id });
+    if (!profile) {
+      profile = await Profile.create({ userId: user._id });
+    }
+
+    // Fetch verified and public claims
+    const claims = await Claim.find({ profileId: profile._id }).sort({ createdAt: -1 });
+
+    // Compute live trust score
+    const trustScore = await calculateProfileTrustScore(profile._id);
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        id: user._id,
+        walletAddress: user.walletAddress,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        role: user.role,
+        createdAt: user.createdAt,
+      },
+      profile,
+      claims,
+      trustScore,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update authenticated user's profile.
+ * PUT /api/profile
+ */
 exports.updateProfile = async (req, res, next) => {
   try {
-    res.status(200).json({ message: 'Profile updated' });
+    const userId = req.user._id || req.user.id;
+    const { headline, bio, education, skills, experience, profileImage, name } = req.body;
+
+    let profile = await Profile.findOne({ userId });
+    if (!profile) {
+      profile = new Profile({ userId });
+    }
+
+    if (headline !== undefined) profile.headline = headline;
+    if (bio !== undefined) profile.bio = bio;
+    if (education !== undefined) profile.education = education;
+    if (skills !== undefined) profile.skills = skills;
+    if (experience !== undefined) profile.experience = experience;
+    if (profileImage !== undefined) profile.profileImage = profileImage;
+
+    await profile.save();
+
+    if (name !== undefined) {
+      await User.findByIdAndUpdate(userId, { name });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully.',
+      profile,
+    });
   } catch (error) {
     next(error);
   }
