@@ -129,6 +129,13 @@ exports.requestVerification = async (req, res, next) => {
       });
     }
 
+    if (claim.status === CLAIM_STATUSES.VERIFIED) {
+      return res.status(400).json({
+        success: false,
+        message: 'Claim is already verified.',
+      });
+    }
+
     claim.status = CLAIM_STATUSES.VERIFICATION_PENDING;
     if (verifierWallet) {
       claim.verification = {
@@ -270,6 +277,40 @@ exports.getTrustScore = async (req, res, next) => {
       success: true,
       profileId,
       ...trustScoreData,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Retrieve verification audit trail history for a claim or profile.
+ * GET /api/verification/history/:claimId
+ * GET /api/verification/history?profileId=...
+ */
+exports.getVerificationHistory = async (req, res, next) => {
+  try {
+    const { claimId } = req.params;
+    const { profileId } = req.query;
+
+    const filter = {};
+    if (claimId && claimId !== 'all') {
+      filter.claimId = claimId;
+    } else if (profileId) {
+      const claims = await Claim.find({ profileId }).select('_id');
+      const claimIds = claims.map((c) => c._id);
+      filter.claimId = { $in: claimIds };
+    }
+
+    const history = await Verification.find(filter)
+      .populate('claimId', 'title type status evidenceHash onChainClaimId')
+      .populate('verifierId', 'walletAddress name role')
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      count: history.length,
+      history,
     });
   } catch (error) {
     next(error);

@@ -11,7 +11,12 @@ const hashData = (input) => {
   if (!input) {
     throw new Error('Input is required for hashing');
   }
-  return crypto.createHash('sha256').update(input).digest('hex');
+  const data = Buffer.isBuffer(input)
+    ? input
+    : typeof input === 'string'
+    ? input
+    : JSON.stringify(input);
+  return crypto.createHash('sha256').update(data).digest('hex');
 };
 
 /**

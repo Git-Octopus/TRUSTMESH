@@ -19,4 +19,8 @@ router.post('/sync', authMiddleware, requireRole('verifier', 'admin'), verificat
 // Public trust score lookup
 router.get('/trust-score/:profileId', verificationController.getTrustScore);
 
+// Public verification history timeline (all, profile, or single claim)
+router.get('/history', verificationController.getVerificationHistory);
+router.get('/history/:claimId', verificationController.getVerificationHistory);
+
 module.exports = router;

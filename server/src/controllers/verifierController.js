@@ -70,3 +70,45 @@ exports.addVerifier = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Revoke or de-authorize a verifier off-chain (Admin only).
+ * DELETE /api/verifiers/:wallet
+ */
+exports.revokeVerifier = async (req, res, next) => {
+  try {
+    const { wallet } = req.params;
+
+    if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet)) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid Ethereum wallet address (0x...) is required.',
+      });
+    }
+
+    const normalizedAddress = wallet.toLowerCase().trim();
+    const user = await User.findOne({ walletAddress: normalizedAddress });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Verifier not found.',
+      });
+    }
+
+    user.role = 'owner';
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Verifier authorization revoked successfully.',
+      user: {
+        id: user._id,
+        walletAddress: user.walletAddress,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};

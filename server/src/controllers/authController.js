@@ -191,3 +191,55 @@ exports.verifyOtp = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Register or update user profile with wallet and details.
+ * POST /api/auth/register
+ */
+exports.register = async (req, res, next) => {
+  try {
+    const { walletAddress, name, email, role } = req.body;
+    if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid Ethereum walletAddress (0x...) is required.',
+      });
+    }
+
+    const normalizedAddress = walletAddress.toLowerCase().trim();
+    let user = await User.findOne({ walletAddress: normalizedAddress });
+
+    if (!user) {
+      user = new User({
+        walletAddress: normalizedAddress,
+        name: name ? name.trim() : '',
+        email: email ? email.toLowerCase().trim() : '',
+        role: role && ['owner', 'verifier', 'admin'].includes(role) ? role : 'owner',
+      });
+      await user.save();
+      await Profile.create({ userId: user._id });
+    } else {
+      if (name !== undefined) user.name = name.trim();
+      if (email !== undefined) user.email = email.toLowerCase().trim();
+      if (role && ['owner', 'verifier', 'admin'].includes(role)) {
+        user.role = role;
+      }
+      await user.save();
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'User registered successfully.',
+      user: {
+        id: user._id,
+        walletAddress: user.walletAddress,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};

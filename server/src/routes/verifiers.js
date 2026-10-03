@@ -7,7 +7,8 @@ const requireRole = require('../middleware/requireRole');
 // Public list of authorized verifiers
 router.get('/', verifierController.getVerifiers);
 
-// Admin-only verifier registration
+// Admin-only verifier registration and revocation
 router.post('/', authMiddleware, requireRole('admin'), verifierController.addVerifier);
+router.delete('/:wallet', authMiddleware, requireRole('admin'), verifierController.revokeVerifier);
 
 module.exports = router;

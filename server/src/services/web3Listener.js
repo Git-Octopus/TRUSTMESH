@@ -22,8 +22,36 @@ function getDefaultContractConfig() {
     } catch (e) {
       console.warn('[web3Listener] Failed to parse contracts/TrustMesh.json:', e.message);
     }
+}
+
+/**
+ * Resolves a database claim from an on-chain event, checking onChainClaimId
+ * and falling back to reading referenceHash from the contract if needed.
+ */
+async function findClaimForEvent(idNum, contract) {
+  const query = [{ onChainClaimId: idNum }];
+  if (idNum.toString().length === 24) {
+    query.push({ _id: idNum });
   }
-  return { address: null, abi: null };
+
+  let claim = await Claim.findOne({ $or: query });
+
+  if (!claim && contract) {
+    try {
+      const onChainData = await contract.getClaim(idNum);
+      if (onChainData && onChainData.referenceHash) {
+        claim = await Claim.findOne({ evidenceHash: onChainData.referenceHash });
+        if (claim) {
+          claim.onChainClaimId = idNum;
+          await claim.save();
+        }
+      }
+    } catch (lookupErr) {
+      // Fallback query failed or not found on-chain
+    }
+  }
+
+  return claim;
 }
 
 /**
@@ -64,13 +92,7 @@ exports.listenToEvents = (rpcUrl, contractAddress, abi) => {
         const idNum = Number(claimId);
         console.log(`[web3Listener] Event ClaimVerified: Claim #${idNum} by ${verifier} (tx: ${txHash})`);
 
-        // Find claim by onChainClaimId or fallback matching
-        let claim = await Claim.findOne({
-          $or: [
-            { onChainClaimId: idNum },
-            { _id: idNum.toString().length === 24 ? idNum : undefined },
-          ],
-        });
+        let claim = await findClaimForEvent(idNum, activeContract);
 
         const verifierUser = await User.findOne({
           walletAddress: verifier.toLowerCase(),
@@ -116,12 +138,7 @@ exports.listenToEvents = (rpcUrl, contractAddress, abi) => {
         const idNum = Number(claimId);
         console.log(`[web3Listener] Event ClaimRejected: Claim #${idNum} - Reason: ${reason} (tx: ${txHash})`);
 
-        let claim = await Claim.findOne({
-          $or: [
-            { onChainClaimId: idNum },
-            { _id: idNum.toString().length === 24 ? idNum : undefined },
-          ],
-        });
+        let claim = await findClaimForEvent(idNum, activeContract);
 
         const verifierUser = await User.findOne({
           walletAddress: verifier.toLowerCase(),
@@ -165,12 +182,7 @@ exports.listenToEvents = (rpcUrl, contractAddress, abi) => {
         const idNum = Number(claimId);
         console.log(`[web3Listener] Event VerificationRevoked: Claim #${idNum} by ${verifier}`);
 
-        let claim = await Claim.findOne({
-          $or: [
-            { onChainClaimId: idNum },
-            { _id: idNum.toString().length === 24 ? idNum : undefined },
-          ],
-        });
+        let claim = await findClaimForEvent(idNum, activeContract);
 
         if (claim) {
           claim.status = CLAIM_STATUSES.REVOKED;
@@ -207,6 +219,19 @@ exports.listenToEvents = (rpcUrl, contractAddress, abi) => {
         );
       } catch (err) {
         console.error('[web3Listener] Error processing VerifierRegistered event:', err);
+      }
+    });
+
+    // 5. VerifierRevoked event
+    activeContract.on('VerifierRevoked', async (verifier, timestamp) => {
+      try {
+        console.log(`[web3Listener] Event VerifierRevoked for ${verifier}`);
+        await User.updateMany(
+          { walletAddress: verifier.toLowerCase() },
+          { $set: { role: 'owner' } }
+        );
+      } catch (err) {
+        console.error('[web3Listener] Error processing VerifierRevoked event:', err);
       }
     });
 

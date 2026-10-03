@@ -52,15 +52,21 @@ exports.createProfile = async (req, res, next) => {
 exports.getProfileByWallet = async (req, res, next) => {
   try {
     const { wallet } = req.params;
-    if (!wallet) {
+    let targetWallet = wallet ? wallet.toLowerCase().trim() : '';
+
+    if (targetWallet === 'me' && req.user?.walletAddress) {
+      targetWallet = req.user.walletAddress.toLowerCase();
+    }
+
+    if (!targetWallet || (!/^0x[a-fA-F0-9]{40}$/.test(targetWallet) && targetWallet !== 'me')) {
       return res.status(400).json({
         success: false,
-        message: 'Wallet address parameter is required.',
+        message: 'A valid Ethereum wallet address (0x...) is required.',
       });
     }
 
     const user = await User.findOne({
-      walletAddress: wallet.toLowerCase().trim(),
+      walletAddress: targetWallet,
     }).select('-nonce');
 
     if (!user) {

@@ -57,7 +57,7 @@ const calculateProfileTrustScore = async (profileId) => {
       }
 
       // Duplicate verifier dampening
-      const verifierKey = claim.verification?.verifierWallet || 'unknown';
+      const verifierKey = (claim.verification?.verifierWallet || 'unknown').toLowerCase();
       verifierCounts[verifierKey] = (verifierCounts[verifierKey] || 0) + 1;
       if (verifierCounts[verifierKey] > 2) {
         points = Math.round(points * 0.5);

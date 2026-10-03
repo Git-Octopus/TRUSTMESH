@@ -11,6 +11,8 @@ router.get('/:id', claimController.getClaimById);
 
 // Authenticated claim creation and evidence upload
 router.post('/', authMiddleware, requireRole('owner', 'verifier', 'admin'), claimController.createClaim);
+router.put('/:id', authMiddleware, requireRole('owner', 'verifier', 'admin'), claimController.updateClaim);
+router.delete('/:id', authMiddleware, requireRole('owner', 'verifier', 'admin'), claimController.deleteClaim);
 router.post(
   '/:id/evidence',
   authMiddleware,

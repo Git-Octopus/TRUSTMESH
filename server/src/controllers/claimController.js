@@ -173,3 +173,98 @@ exports.uploadClaimEvidence = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Update an existing claim (owner or admin).
+ * PUT /api/claims/:id
+ */
+exports.updateClaim = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id || req.user.id;
+    const { title, type, description, status, onChainClaimId, evidenceUrl, evidenceHash } = req.body;
+
+    const claim = await Claim.findById(id);
+    if (!claim) {
+      return res.status(404).json({
+        success: false,
+        message: 'Claim not found.',
+      });
+    }
+
+    if (claim.userId.toString() !== userId.toString() && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You can only update your own claims.',
+      });
+    }
+
+    // Prohibit editing verified or revoked claims
+    if ([CLAIM_STATUSES.VERIFIED, CLAIM_STATUSES.REVOKED].includes(claim.status) && req.user.role !== 'admin') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot edit claim in '${claim.status}' status.`,
+      });
+    }
+
+    if (title !== undefined) claim.title = title;
+    if (type !== undefined) claim.type = type;
+    if (description !== undefined) claim.description = description;
+    if (onChainClaimId !== undefined) claim.onChainClaimId = onChainClaimId;
+    if (evidenceUrl !== undefined) claim.evidenceUrl = evidenceUrl;
+    if (evidenceHash !== undefined) claim.evidenceHash = evidenceHash;
+    if (status && CLAIM_STATUSES[status]) claim.status = status;
+
+    await claim.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Claim updated successfully.',
+      claim,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Delete a claim (owner or admin).
+ * DELETE /api/claims/:id
+ */
+exports.deleteClaim = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id || req.user.id;
+
+    const claim = await Claim.findById(id);
+    if (!claim) {
+      return res.status(404).json({
+        success: false,
+        message: 'Claim not found.',
+      });
+    }
+
+    if (claim.userId.toString() !== userId.toString() && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: You can only delete your own claims.',
+      });
+    }
+
+    if ([CLAIM_STATUSES.VERIFIED].includes(claim.status) && req.user.role !== 'admin') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete an already verified claim.',
+      });
+    }
+
+    await Claim.deleteOne({ _id: id });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Claim deleted successfully.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};

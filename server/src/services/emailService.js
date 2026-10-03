@@ -1,7 +1,14 @@
 const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 
 let transporter = null;
 
+/**
+ * Initializes and returns a singleton Nodemailer transporter.
+ * Uses configured SMTP credentials if provided in the environment.
+ * If SMTP is not configured (such as during local development or testing),
+ * initializes a JSON stream transport that formats and logs dispatches.
+ */
 const getTransporter = () => {
   if (transporter) return transporter;
 
@@ -17,16 +24,28 @@ const getTransporter = () => {
       secure: port === 465,
       auth: { user, pass },
     });
+  } else if (process.env.NODE_ENV === 'test') {
+    transporter = nodemailer.createTransport({
+      jsonTransport: true,
+    });
   } else {
-    // Development / Mock Transporter
+    // Local developer stream transport
     transporter = {
       sendMail: async (mailOptions) => {
-        console.log('\n[EmailService - DEV MODE]');
-        console.log(`To: ${mailOptions.to}`);
-        console.log(`Subject: ${mailOptions.subject}`);
-        console.log(`Body: ${mailOptions.text || mailOptions.html}`);
-        console.log('------------------------------------\n');
-        return { messageId: 'mock-dev-id-' + Date.now() };
+        const messageId = `<${crypto.randomBytes(16).toString('hex')}@trustmesh.network>`;
+        if (process.env.NODE_ENV !== 'test') {
+          console.log(`[EmailService] Outgoing Notification -> To: ${mailOptions.to} | Subject: ${mailOptions.subject}`);
+        }
+        return {
+          messageId,
+          accepted: [mailOptions.to],
+          rejected: [],
+          response: '250 Message accepted for delivery',
+          envelope: {
+            from: mailOptions.from,
+            to: [mailOptions.to],
+          },
+        };
       },
     };
   }
@@ -35,23 +54,26 @@ const getTransporter = () => {
 };
 
 /**
- * Sends OTP email to the user.
- * @param {string} to - Recipient email
- * @param {string} otpCode - 6-digit OTP code
- * @param {number} expiryMinutes - Expiration in minutes
+ * Dispatches an OTP verification email to the user.
+ * @param {string} to - Recipient email address
+ * @param {string} otpCode - 6-digit verification code
+ * @param {number} expiryMinutes - Code expiration in minutes
+ * @returns {Promise<object>} Send result object
  */
 const sendOtpEmail = async (to, otpCode, expiryMinutes = 5) => {
   const mailTransporter = getTransporter();
   const subject = 'TrustMesh - Your Verification Code';
   const text = `Your TrustMesh email verification code is: ${otpCode}. It will expire in ${expiryMinutes} minutes.`;
   const html = `
-    <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-      <h2 style="color: #4F46E5;">TrustMesh Verification</h2>
-      <p>Please use the following single-use code to verify your email address:</p>
-      <div style="font-size: 28px; font-weight: bold; letter-spacing: 4px; padding: 12px; background: #F3F4F6; display: inline-block; border-radius: 6px; margin: 16px 0;">
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #1e293b; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+      <h2 style="color: #2563eb; margin-top: 0;">TrustMesh Verification</h2>
+      <p style="font-size: 15px; line-height: 1.5;">Please use the following single-use code to verify your email address:</p>
+      <div style="font-size: 32px; font-weight: 700; letter-spacing: 6px; padding: 16px 24px; background: #f8fafc; border: 1px solid #cbd5e1; display: inline-block; border-radius: 6px; margin: 16px 0; color: #0f172a;">
         ${otpCode}
       </div>
-      <p style="color: #6B7280; font-size: 14px;">This code expires in <strong>${expiryMinutes} minutes</strong>. If you did not request this, please ignore this email.</p>
+      <p style="color: #64748b; font-size: 13px; line-height: 1.5;">This code will expire in <strong>${expiryMinutes} minutes</strong>. If you did not request this verification, please disregard this email.</p>
+      <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+      <p style="color: #94a3b8; font-size: 11px;">TrustMesh Decentralized Identity & Verification Network</p>
     </div>
   `;
 

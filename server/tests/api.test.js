@@ -182,6 +182,23 @@ describe('1. Authentication & Security (Wallet + Signatures + OTP)', () => {
     expect(updatedUser.emailVerified).toBe(true);
     expect(updatedUser.email).toBe(email);
   });
+
+  it('POST /api/auth/register should register a new user or update details', async () => {
+    const freshWallet = ethers.Wallet.createRandom();
+    const regRes = await request(app)
+      .post('/api/auth/register')
+      .send({
+        walletAddress: freshWallet.address,
+        name: 'Bob Szabo',
+        email: 'bob@trustmesh.network',
+      });
+
+    expect(regRes.status).toBe(200);
+    expect(regRes.body.success).toBe(true);
+    expect(regRes.body.user.name).toBe('Bob Szabo');
+    expect(regRes.body.user.email).toBe('bob@trustmesh.network');
+    expect(regRes.body.user.walletAddress).toBe(freshWallet.address.toLowerCase());
+  });
 });
 
 describe('2. Profile Management & Public Profiles', () => {
@@ -300,6 +317,38 @@ describe('3. Claims & Evidence Management', () => {
     expect(res.body.checks.emailVerified).toBe(true);
     expect(res.body.checks.hasEvidence).toBe(true);
   });
+
+  it('PUT /api/claims/:id and DELETE /api/claims/:id should manage draft claims', async () => {
+    // Create draft claim to update and delete
+    const draftRes = await request(app)
+      .post('/api/claims')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({
+        title: 'Draft Project Claim',
+        type: 'Project',
+        description: 'Initial draft',
+      });
+    expect(draftRes.status).toBe(201);
+    const draftId = draftRes.body.claim._id;
+
+    // Update claim
+    const updateRes = await request(app)
+      .put(`/api/claims/${draftId}`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({
+        title: 'Updated Project Claim',
+        description: 'Updated draft description',
+      });
+    expect(updateRes.status).toBe(200);
+    expect(updateRes.body.claim.title).toBe('Updated Project Claim');
+
+    // Delete claim
+    const deleteRes = await request(app)
+      .delete(`/api/claims/${draftId}`)
+      .set('Authorization', `Bearer ${ownerToken}`);
+    expect(deleteRes.status).toBe(200);
+    expect(deleteRes.body.success).toBe(true);
+  });
 });
 
 describe('4. Verification Engine & Blockchain Sync', () => {
@@ -352,6 +401,15 @@ describe('4. Verification Engine & Blockchain Sync', () => {
     expect(res.body.totalVerified).toBeGreaterThanOrEqual(1);
     expect(res.body.breakdown.mentorClient).toBeGreaterThanOrEqual(1);
   });
+
+  it('GET /api/verification/history should return verification history timeline', async () => {
+    const res = await request(app).get(`/api/verification/history/${pendingClaim._id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(Array.isArray(res.body.history)).toBe(true);
+    expect(res.body.history.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.history[0].status).toBe('VERIFIED');
+  });
 });
 
 describe('5. Authorized Verifiers & Admin Control', () => {
@@ -390,5 +448,13 @@ describe('5. Authorized Verifiers & Admin Control', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.verifier.walletAddress).toBe(newVerifierWallet.address.toLowerCase());
     expect(res.body.verifier.role).toBe('verifier');
+
+    // Revoke verifier authorization
+    const revokeRes = await request(app)
+      .delete(`/api/verifiers/${newVerifierWallet.address}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(revokeRes.status).toBe(200);
+    expect(revokeRes.body.success).toBe(true);
+    expect(revokeRes.body.user.role).toBe('owner');
   });
 });
