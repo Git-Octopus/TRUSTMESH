@@ -2,15 +2,10 @@ const { JsonRpcProvider, Contract } = require('ethers');
 const path = require('path');
 const fs = require('fs');
 
-// Try loading models gracefully (Dev B's models)
-let Claim, Verification, User;
-try {
-  Claim = require('../models/Claim');
-  Verification = require('../models/Verification');
-  User = require('../models/User');
-} catch (err) {
-  console.warn('[web3Listener] Notice: Mongoose models not fully loaded yet:', err.message);
-}
+const Claim = require('../models/Claim');
+const Verification = require('../models/Verification');
+const User = require('../models/User');
+const { CLAIM_STATUSES } = require('../utils/constants');
 
 let activeContract = null;
 let activeProvider = null;
@@ -27,8 +22,36 @@ function getDefaultContractConfig() {
     } catch (e) {
       console.warn('[web3Listener] Failed to parse contracts/TrustMesh.json:', e.message);
     }
+}
+
+/**
+ * Resolves a database claim from an on-chain event, checking onChainClaimId
+ * and falling back to reading referenceHash from the contract if needed.
+ */
+async function findClaimForEvent(idNum, contract) {
+  const query = [{ onChainClaimId: idNum }];
+  if (idNum.toString().length === 24) {
+    query.push({ _id: idNum });
   }
-  return { address: null, abi: null };
+
+  let claim = await Claim.findOne({ $or: query });
+
+  if (!claim && contract) {
+    try {
+      const onChainData = await contract.getClaim(idNum);
+      if (onChainData && onChainData.referenceHash) {
+        claim = await Claim.findOne({ evidenceHash: onChainData.referenceHash });
+        if (claim) {
+          claim.onChainClaimId = idNum;
+          await claim.save();
+        }
+      }
+    } catch (lookupErr) {
+      // Fallback query failed or not found on-chain
+    }
+  }
+
+  return claim;
 }
 
 /**
@@ -36,7 +59,7 @@ function getDefaultContractConfig() {
  * Decouples MetaMask tx from database update — DB updates only after
  * the on-chain event is mined.
  * 
- * @param {string} [rpcUrl] - Local or remote JSON-RPC URL (defaults to env or 127.0.0.1:7545)
+ * @param {string} [rpcUrl] - Local or remote JSON-RPC URL
  * @param {string} [contractAddress] - Deployed contract address
  * @param {Array} [abi] - Contract ABI
  */
@@ -52,7 +75,7 @@ exports.listenToEvents = (rpcUrl, contractAddress, abi) => {
   }
 
   if (!targetRpc || !targetAddress || !targetAbi) {
-    console.log('[web3Listener] Missing RPC URL, contract address, or ABI. Listener skipped.');
+    console.log('[web3Listener] Notice: Missing RPC URL, contract address, or ABI. Blockchain event listener skipped.');
     return null;
   }
 
@@ -67,41 +90,41 @@ exports.listenToEvents = (rpcUrl, contractAddress, abi) => {
       try {
         const txHash = event?.log?.transactionHash || '';
         const idNum = Number(claimId);
-        console.log(`[web3Listener] Event ClaimVerified received: Claim #${idNum} by ${verifier} (tx: ${txHash})`);
+        console.log(`[web3Listener] Event ClaimVerified: Claim #${idNum} by ${verifier} (tx: ${txHash})`);
 
-        if (Claim && Verification) {
-          // Find claim by onChainClaimId or fallback matching
-          let claim = await Claim.findOne({
-            $or: [{ onChainClaimId: idNum }, { _id: (idNum.toString().length === 24 ? idNum : undefined) }]
+        let claim = await findClaimForEvent(idNum, activeContract);
+
+        const verifierUser = await User.findOne({
+          walletAddress: verifier.toLowerCase(),
+        });
+
+        if (claim) {
+          claim.status = CLAIM_STATUSES.VERIFIED;
+          claim.verification = {
+            verifierId: verifierUser ? verifierUser._id : null,
+            verifierWallet: verifier.toLowerCase(),
+            verificationMethod: 'smart_contract',
+            verifiedAt: new Date(Number(timestamp) * 1000 || Date.now()),
+            transactionHash: txHash,
+            status: CLAIM_STATUSES.VERIFIED,
+          };
+          await claim.save();
+
+          await Verification.create({
+            claimId: claim._id,
+            verifierId: verifierUser ? verifierUser._id : null,
+            verifierWallet: verifier.toLowerCase(),
+            method: 'smart_contract',
+            status: CLAIM_STATUSES.VERIFIED,
+            approved: true,
+            comments: 'Verified on-chain via TrustMesh.sol',
+            transactionHash: txHash,
+            blockchainTimestamp: Number(timestamp),
           });
 
-          // Look up verifier user in DB if exists
-          let verifierUser = null;
-          if (User) {
-            verifierUser = await User.findOne({
-              walletAddress: { $regex: new RegExp(`^${verifier}$`, 'i') }
-            });
-          }
-
-          if (claim) {
-            claim.status = 'approved';
-            claim.onChainTxHash = txHash;
-            await claim.save();
-
-            await Verification.create({
-              claim: claim._id,
-              verifier: verifierUser ? verifierUser._id : claim.user,
-              verifierWallet: verifier,
-              approved: true,
-              comments: 'Verified on-chain via TrustMesh.sol',
-              transactionHash: txHash,
-              blockchainTimestamp: Number(timestamp)
-            });
-
-            console.log(`[web3Listener] Database synced: Claim #${idNum} set to approved`);
-          } else {
-            console.log(`[web3Listener] Claim #${idNum} not found in off-chain database`);
-          }
+          console.log(`[web3Listener] Database synced: Claim #${idNum} status set to VERIFIED`);
+        } else {
+          console.log(`[web3Listener] Claim #${idNum} not found in database`);
         }
       } catch (err) {
         console.error('[web3Listener] Error processing ClaimVerified event:', err);
@@ -113,37 +136,39 @@ exports.listenToEvents = (rpcUrl, contractAddress, abi) => {
       try {
         const txHash = event?.log?.transactionHash || '';
         const idNum = Number(claimId);
-        console.log(`[web3Listener] Event ClaimRejected received: Claim #${idNum} - Reason: ${reason} (tx: ${txHash})`);
+        console.log(`[web3Listener] Event ClaimRejected: Claim #${idNum} - Reason: ${reason} (tx: ${txHash})`);
 
-        if (Claim && Verification) {
-          let claim = await Claim.findOne({
-            $or: [{ onChainClaimId: idNum }, { _id: (idNum.toString().length === 24 ? idNum : undefined) }]
+        let claim = await findClaimForEvent(idNum, activeContract);
+
+        const verifierUser = await User.findOne({
+          walletAddress: verifier.toLowerCase(),
+        });
+
+        if (claim) {
+          claim.status = CLAIM_STATUSES.REJECTED;
+          claim.verification = {
+            verifierId: verifierUser ? verifierUser._id : null,
+            verifierWallet: verifier.toLowerCase(),
+            verificationMethod: 'smart_contract',
+            verifiedAt: new Date(Number(timestamp) * 1000 || Date.now()),
+            transactionHash: txHash,
+            status: CLAIM_STATUSES.REJECTED,
+          };
+          await claim.save();
+
+          await Verification.create({
+            claimId: claim._id,
+            verifierId: verifierUser ? verifierUser._id : null,
+            verifierWallet: verifier.toLowerCase(),
+            method: 'smart_contract',
+            status: CLAIM_STATUSES.REJECTED,
+            approved: false,
+            comments: reason || 'Rejected on-chain via TrustMesh.sol',
+            transactionHash: txHash,
+            blockchainTimestamp: Number(timestamp),
           });
 
-          let verifierUser = null;
-          if (User) {
-            verifierUser = await User.findOne({
-              walletAddress: { $regex: new RegExp(`^${verifier}$`, 'i') }
-            });
-          }
-
-          if (claim) {
-            claim.status = 'rejected';
-            claim.onChainTxHash = txHash;
-            await claim.save();
-
-            await Verification.create({
-              claim: claim._id,
-              verifier: verifierUser ? verifierUser._id : claim.user,
-              verifierWallet: verifier,
-              approved: false,
-              comments: reason || 'Rejected on-chain via TrustMesh.sol',
-              transactionHash: txHash,
-              blockchainTimestamp: Number(timestamp)
-            });
-
-            console.log(`[web3Listener] Database synced: Claim #${idNum} set to rejected`);
-          }
+          console.log(`[web3Listener] Database synced: Claim #${idNum} status set to REJECTED`);
         }
       } catch (err) {
         console.error('[web3Listener] Error processing ClaimRejected event:', err);
@@ -155,19 +180,29 @@ exports.listenToEvents = (rpcUrl, contractAddress, abi) => {
       try {
         const txHash = event?.log?.transactionHash || '';
         const idNum = Number(claimId);
-        console.log(`[web3Listener] Event VerificationRevoked received: Claim #${idNum} by ${verifier}`);
+        console.log(`[web3Listener] Event VerificationRevoked: Claim #${idNum} by ${verifier}`);
 
-        if (Claim) {
-          let claim = await Claim.findOne({
-            $or: [{ onChainClaimId: idNum }, { _id: (idNum.toString().length === 24 ? idNum : undefined) }]
+        let claim = await findClaimForEvent(idNum, activeContract);
+
+        if (claim) {
+          claim.status = CLAIM_STATUSES.REVOKED;
+          if (claim.verification) {
+            claim.verification.status = CLAIM_STATUSES.REVOKED;
+          }
+          await claim.save();
+
+          await Verification.create({
+            claimId: claim._id,
+            verifierWallet: verifier.toLowerCase(),
+            method: 'smart_contract',
+            status: CLAIM_STATUSES.REVOKED,
+            approved: false,
+            comments: 'Verification revoked on-chain',
+            transactionHash: txHash,
+            blockchainTimestamp: Number(timestamp),
           });
 
-          if (claim) {
-            claim.status = 'revoked';
-            claim.onChainTxHash = txHash;
-            await claim.save();
-            console.log(`[web3Listener] Database synced: Claim #${idNum} set to revoked`);
-          }
+          console.log(`[web3Listener] Database synced: Claim #${idNum} status set to REVOKED`);
         }
       } catch (err) {
         console.error('[web3Listener] Error processing VerificationRevoked event:', err);
@@ -177,21 +212,32 @@ exports.listenToEvents = (rpcUrl, contractAddress, abi) => {
     // 4. VerifierRegistered event
     activeContract.on('VerifierRegistered', async (verifier, timestamp) => {
       try {
-        console.log(`[web3Listener] Event VerifierRegistered received for ${verifier}`);
-        if (User) {
-          await User.updateMany(
-            { walletAddress: { $regex: new RegExp(`^${verifier}$`, 'i') } },
-            { $set: { role: 'verifier' } }
-          );
-        }
+        console.log(`[web3Listener] Event VerifierRegistered for ${verifier}`);
+        await User.updateMany(
+          { walletAddress: verifier.toLowerCase() },
+          { $set: { role: 'verifier' } }
+        );
       } catch (err) {
         console.error('[web3Listener] Error processing VerifierRegistered event:', err);
       }
     });
 
+    // 5. VerifierRevoked event
+    activeContract.on('VerifierRevoked', async (verifier, timestamp) => {
+      try {
+        console.log(`[web3Listener] Event VerifierRevoked for ${verifier}`);
+        await User.updateMany(
+          { walletAddress: verifier.toLowerCase() },
+          { $set: { role: 'owner' } }
+        );
+      } catch (err) {
+        console.error('[web3Listener] Error processing VerifierRevoked event:', err);
+      }
+    });
+
     return activeContract;
   } catch (err) {
-    console.error('[web3Listener] Failed to connect listener:', err.message);
+    console.warn('[web3Listener] Could not establish blockchain listener connection:', err.message);
     return null;
   }
 };
