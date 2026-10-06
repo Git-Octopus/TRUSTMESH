@@ -1,18 +1,26 @@
-import { useState, useCallback } from 'react';
-import { getWeb3Provider } from '../services/web3';
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
-export function useWallet() {
-  const [address, setAddress] = useState(null);
+export const useWallet = create(
+  persist(
+    (set) => ({
+      walletAddress: null,
+      jwt: null,
+      role: null,
+      profile: null,
 
-  const connectWallet = useCallback(async () => {
-    const provider = await getWeb3Provider();
-    if (provider) {
-      const accounts = await provider.send('eth_requestAccounts', []);
-      if (accounts.length > 0) {
-        setAddress(accounts[0]);
+      setWallet: (address, token, role) => {
+        set({ walletAddress: address, jwt: token, role });
+      },
+
+      setProfile: (profile) => set({ profile }),
+
+      disconnect: () => {
+        set({ walletAddress: null, jwt: null, role: null, profile: null });
       }
+    }),
+    {
+      name: 'trustmesh_auth',
     }
-  }, []);
-
-  return { address, connectWallet };
-}
+  )
+);
