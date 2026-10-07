@@ -11,6 +11,14 @@ const { validateEvidenceFile } = require('../services/evidenceValidator');
 exports.createClaim = async (req, res, next) => {
   try {
     const userId = req.user._id || req.user.id;
+
+    if (req.user.isSuspended) {
+      return res.status(403).json({
+        success: false,
+        message: `Account is flagged/suspended: ${req.user.suspensionReason || 'Contact a verifier or administrator.'}`,
+      });
+    }
+
     const { title, type, description, evidenceUrl, evidenceHash, status, onChainClaimId } = req.body;
 
     if (!title || !type) {

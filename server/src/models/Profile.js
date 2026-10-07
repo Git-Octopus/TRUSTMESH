@@ -23,6 +23,23 @@ const ExperienceSchema = new mongoose.Schema(
   { _id: true }
 );
 
+const ProfileDocumentSchema = new mongoose.Schema(
+  {
+    category: {
+      type: String,
+      enum: ['identity', 'resume', 'degree', 'employment', 'organization', 'other'],
+      required: true,
+    },
+    title: { type: String, required: true },
+    documentUrl: { type: String, required: true },
+    fileHash: { type: String, required: true }, // SHA-256 evidence digest
+    fileName: { type: String, default: '' },
+    fileSize: { type: Number, default: 0 },
+    uploadedAt: { type: Date, default: Date.now },
+  },
+  { _id: true }
+);
+
 const ProfileSchema = new mongoose.Schema(
   {
     userId: {
@@ -52,6 +69,10 @@ const ProfileSchema = new mongoose.Schema(
     },
     experience: {
       type: [ExperienceSchema],
+      default: [],
+    },
+    profileDocuments: {
+      type: [ProfileDocumentSchema],
       default: [],
     },
     profileImage: {

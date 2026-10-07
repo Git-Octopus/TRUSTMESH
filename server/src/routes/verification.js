@@ -16,6 +16,10 @@ router.post('/request', authMiddleware, requireRole('owner', 'verifier', 'admin'
 // Blockchain sync / verifier action sync
 router.post('/sync', authMiddleware, requireRole('verifier', 'admin'), verificationController.syncVerification);
 
+// Direct claim verification and rejection endpoints
+router.post('/:id/verify', authMiddleware, requireRole('verifier', 'admin'), verificationController.verifyClaim);
+router.post('/:id/reject', authMiddleware, requireRole('verifier', 'admin'), verificationController.rejectClaim);
+
 // Public trust score lookup
 router.get('/trust-score/:profileId', verificationController.getTrustScore);
 

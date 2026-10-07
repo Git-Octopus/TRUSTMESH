@@ -9,6 +9,16 @@ export default function Landing() {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[80vh] text-center px-4">
+      {/* Product Logo Emblem */}
+      <div className="relative mb-6 group">
+        <div className="absolute -inset-1.5 rounded-3xl bg-gradient-to-r from-sky-500 via-teal-400 to-blue-600 opacity-40 blur-xl group-hover:opacity-75 transition duration-700 animate-pulse" />
+        <img
+          src="/logo.jpg"
+          alt="TrustMesh Product Logo"
+          className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-2xl shadow-2xl border-2 border-sky-400/40 object-cover transform group-hover:scale-105 transition duration-500"
+        />
+      </div>
+
       {/* Badge / Pill */}
       <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-800/80 border border-slate-700/80 text-xs font-mono text-tm-teal mb-6 shadow-sm">
         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
