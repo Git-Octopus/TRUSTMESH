@@ -17,12 +17,14 @@ const getTransporter = () => {
   const user = process.env.EMAIL_USER;
   const pass = process.env.EMAIL_PASS;
 
-  if (host && user && pass) {
+  const cleanPass = pass ? pass.replace(/\s+/g, '') : pass;
+
+  if (host && user && cleanPass) {
     transporter = nodemailer.createTransport({
       host,
       port,
       secure: port === 465,
-      auth: { user, pass },
+      auth: { user: user.trim(), pass: cleanPass },
     });
   } else if (process.env.NODE_ENV === 'test') {
     transporter = nodemailer.createTransport({
@@ -34,7 +36,11 @@ const getTransporter = () => {
       sendMail: async (mailOptions) => {
         const messageId = `<${crypto.randomBytes(16).toString('hex')}@trustmesh.network>`;
         if (process.env.NODE_ENV !== 'test') {
+          const matchCode = mailOptions.text.match(/\b\d{6}\b/);
           console.log(`[EmailService] Outgoing Notification -> To: ${mailOptions.to} | Subject: ${mailOptions.subject}`);
+          if (matchCode) {
+            console.log(`[EmailService] ⚡ DEV OTP CODE: [ ${matchCode[0]} ] (Valid for 5 mins)`);
+          }
         }
         return {
           messageId,
@@ -77,8 +83,9 @@ const sendOtpEmail = async (to, otpCode, expiryMinutes = 5) => {
     </div>
   `;
 
+  const fromSender = process.env.EMAIL_FROM || (process.env.EMAIL_USER ? `"TrustMesh" <${process.env.EMAIL_USER}>` : '"TrustMesh Verification" <no-reply@trustmesh.network>');
   return await mailTransporter.sendMail({
-    from: process.env.EMAIL_FROM || '"TrustMesh Verification" <no-reply@trustmesh.network>',
+    from: fromSender,
     to,
     subject,
     text,

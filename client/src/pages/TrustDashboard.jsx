@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../services/api';
+import TrustScoreChart from '../components/TrustScoreChart';
+import StatusBadge from '../components/StatusBadge';
 
 export default function TrustDashboard() {
   const { wallet } = useParams();
@@ -8,82 +10,103 @@ export default function TrustDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchScore();
+    fetchScoreData();
   }, [wallet]);
 
-  const fetchScore = async () => {
+  const fetchScoreData = async () => {
     try {
       setLoading(true);
       const res = await api.get(`/trust-score/${wallet}`);
       setData(res.data);
     } catch (err) {
-      console.error(err);
+      console.error('Failed to fetch trust score details:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) return <div className="text-center p-8">Loading Trust Score...</div>;
-  if (!data) return <div className="text-center p-8 text-red-400">Profile not found</div>;
+  if (loading) {
+    return (
+      <div className="flex justify-center py-24">
+        <div className="w-8 h-8 border-3 border-tm-blue border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
-  const score = data.trustScore || 0;
-  
-  let scoreColor = 'text-gray-400';
-  if (score >= 90) scoreColor = 'text-tm-verified';
-  else if (score >= 75) scoreColor = 'text-tm-teal';
-  else if (score >= 60) scoreColor = 'text-tm-blue';
+  if (!data) {
+    return (
+      <div className="max-w-md mx-auto my-16 bg-slate-900 border border-slate-800 p-8 rounded-2xl text-center">
+        <h3 className="text-lg font-bold text-white mb-2">Score Profile Unavailable</h3>
+        <p className="text-xs text-slate-400 mb-6">Unable to compute or locate a score record for wallet {wallet}.</p>
+        <Link to="/claims" className="px-5 py-2.5 rounded-xl bg-slate-800 text-white text-xs font-semibold">
+          Return to Claims
+        </Link>
+      </div>
+    );
+  }
+
+  const score = data.trustScore !== undefined ? data.trustScore : 50;
+  const breakdownCounts = data.breakdown || {};
+  const badges = data.badges || [];
+  const verifiedClaims = data.verifiedClaims || [];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
-      <div className="bg-tm-charcoal p-8 rounded-lg border border-gray-800 shadow-2xl text-center">
-        <h2 className="text-2xl font-bold mb-2">Live Trust Score</h2>
-        <p className="text-gray-400 font-mono mb-6">{wallet}</p>
-        
-        <div className="relative inline-flex items-center justify-center mb-6">
-          <svg className="w-48 h-48 transform -rotate-90">
-            <circle cx="96" cy="96" r="88" className="text-gray-800" strokeWidth="12" stroke="currentColor" fill="transparent" />
-            <circle cx="96" cy="96" r="88" className={scoreColor} strokeWidth="12" strokeDasharray={552} strokeDashoffset={552 - (552 * score) / 100} strokeLinecap="round" stroke="currentColor" fill="transparent" />
-          </svg>
-          <div className="absolute flex flex-col items-center justify-center">
-            <span className={`text-6xl font-bold ${scoreColor}`}>{score}</span>
-            <span className="text-sm text-gray-500 uppercase tracking-widest mt-1">/ 100</span>
+    <div className="max-w-4xl mx-auto pb-16 space-y-8">
+      {/* Visual Chart with Radial Gauge and Source Weights */}
+      <TrustScoreChart
+        score={score}
+        breakdown={breakdownCounts}
+        badges={badges}
+        walletAddress={wallet}
+      />
+
+      {/* Contributing Claims List */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl">
+        <h3 className="text-xl font-bold text-white mb-2">Contributing Credential Records</h3>
+        <p className="text-xs text-slate-400 mb-6">
+          Each verified credential adds weighted trust capital based on verification provenance.
+        </p>
+
+        {verifiedClaims.length === 0 ? (
+          <div className="py-8 text-center text-slate-500 text-xs">
+            No verified claims currently contribute to this score. Baseline score is 50.
           </div>
-        </div>
-        
-        {data.badges && data.badges.length > 0 && (
-          <div className="flex flex-wrap justify-center gap-2 mt-4">
-            {data.badges.map(b => (
-              <span key={b} className="px-3 py-1 bg-yellow-900/30 text-yellow-500 border border-yellow-700/50 rounded-full text-sm font-semibold">
-                🏆 {b}
-              </span>
+        ) : (
+          <div className="space-y-3">
+            {verifiedClaims.map((item, idx) => (
+              <div
+                key={item.claimId || idx}
+                className="p-4 bg-slate-950/70 border border-slate-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-slate-800 text-slate-300">
+                      {item.type}
+                    </span>
+                    <h4 className="text-sm font-bold text-white">{item.title}</h4>
+                  </div>
+                  {item.verifierWallet && (
+                    <p className="font-mono text-xs text-slate-500">
+                      Verified by: {item.verifierWallet.slice(0, 8)}...{item.verifierWallet.slice(-6)}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/30">
+                    +{item.points || 10} pts
+                  </span>
+                  <Link
+                    to={`/claim/${item.claimId}`}
+                    className="text-xs text-tm-teal hover:underline font-medium"
+                  >
+                    View Proof →
+                  </Link>
+                </div>
+              </div>
             ))}
           </div>
         )}
-      </div>
-
-      <div className="bg-tm-charcoal rounded-lg border border-gray-800 p-6">
-        <h3 className="text-xl font-bold mb-4">Score Breakdown</h3>
-        <p className="text-sm text-gray-400 mb-6">Base score starts at 50. Points are awarded based on cryptographic verifications.</p>
-        
-        <div className="space-y-4">
-          <div className="flex justify-between items-center p-4 bg-slate-900 rounded border border-gray-700">
-            <span>Base Profile</span>
-            <span className="font-mono text-gray-400">50 pts</span>
-          </div>
-          {data.breakdown?.map((item, i) => (
-            <div key={i} className="flex justify-between items-center p-4 bg-slate-900 rounded border border-gray-700">
-              <div>
-                <span className="font-semibold">{item.type}</span>
-                <p className="text-sm text-gray-400">{item.title}</p>
-              </div>
-              <div className="text-right">
-                <span className="font-mono text-green-400">+{item.points} pts</span>
-                <br/>
-                <Link to={`/claim/${item.claimId}`} className="text-xs text-tm-teal hover:underline">View Proof</Link>
-              </div>
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   );

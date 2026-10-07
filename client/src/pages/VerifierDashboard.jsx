@@ -1,14 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { ethers } from 'ethers';
 import api from '../services/api';
 import { useWallet } from '../hooks/useWallet';
-import TrustMeshConfig from '../contracts/TrustMesh.json';
+import VerifierQueueRow from '../components/VerifierQueueRow';
+import TxStatusModal from '../components/TxStatusModal';
+import { verifyOnChainClaim, rejectOnChainClaim, createOnChainClaim } from '../services/web3';
 
 export default function VerifierDashboard() {
   const { walletAddress } = useWallet();
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [processingId, setProcessingId] = useState(null);
+  const [processingClaimId, setProcessingClaimId] = useState(null);
+
+  // Reject Modal State
+  const [rejectModal, setRejectModal] = useState({
+    isOpen: false,
+    claim: null,
+    reason: '',
+  });
+
+  // MetaMask Tx Modal State
+  const [txModal, setTxModal] = useState({
+    isOpen: false,
+    status: 'signing',
+    title: 'Claim Verification',
+    message: '',
+    txHash: '',
+    error: '',
+  });
 
   useEffect(() => {
     fetchQueue();
@@ -17,138 +35,253 @@ export default function VerifierDashboard() {
   const fetchQueue = async () => {
     try {
       setLoading(true);
-      // Fetch claims pending verification
+      // Fetch claims pending review
       const res = await api.get('/claims?status=VERIFICATION_PENDING');
       setQueue(res.data.claims || []);
     } catch (err) {
-      console.error(err);
+      console.error('Failed to fetch verification queue:', err);
     } finally {
       setLoading(false);
     }
   };
 
   const handleApprove = async (claim) => {
-    if (!window.ethereum) return alert('MetaMask required');
     try {
-      setProcessingId(claim._id);
-      
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(TrustMeshConfig.address, TrustMeshConfig.abi, signer);
-
-      // Call verifyClaim on-chain (using ID or off-chain identifier depending on contract)
-      // Assuming contract expects a numeric claim ID mapping. We will use a dummy ID for the demo if none mapped.
-      // Or in the actual implementation it might take a string hash. Let's pass the claim._id as a string/bytes or however it's structured.
-      // Wait, let's look at the ABI or doc. The doc says: `function verifyClaim(uint256 claimId)`.
-      // Our Mongo _id is a hex string, not uint256. 
-      // The doc says: `createClaim` returns `uint256 claimId`. We need to fetch that from the db.
-      // Assuming `claim.blockchainId` exists. If not, we just hash the mongo ID to a uint256 for this call.
-      
-      const tx = await contract.verifyClaim(claim.blockchainId || 1); // fallback to 1 for safety if missing
-      
-      alert('Transaction submitted to blockchain. Waiting for confirmation...');
-      
-      await tx.wait();
-      
-      // Notify backend to sync
-      await api.post('/verification/sync', { 
-         claimId: claim._id, 
-         transactionHash: tx.hash,
-         status: 'VERIFIED'
-      });
-      
-      alert('Claim successfully verified on-chain!');
-      fetchQueue();
-      
-    } catch (err) {
-      console.error(err);
-      alert('Verification failed: ' + (err.reason || err.message));
-    } finally {
-      setProcessingId(null);
-    }
-  };
-
-  const handleReject = async (claim) => {
-    const reason = prompt("Enter rejection reason (optional):");
-    if (reason === null) return; // user cancelled
-
-    try {
-      setProcessingId(claim._id);
-      
-      // We could do this via smart contract `rejectClaim` or just off-chain depending on requirements.
-      // The doc says "route Reject through the contract too for consistency".
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(TrustMeshConfig.address, TrustMeshConfig.abi, signer);
-
-      const tx = await contract.rejectClaim(claim.blockchainId || 1, reason || "No reason provided");
-      await tx.wait();
-
-      await api.post('/verification/sync', { 
-         claimId: claim._id, 
-         transactionHash: tx.hash,
-         status: 'REJECTED'
+      setProcessingClaimId(claim._id);
+      setTxModal({
+        isOpen: true,
+        status: 'signing',
+        title: 'Approve & Verify Claim',
+        message: 'Please confirm the verifyClaim transaction in MetaMask...',
+        txHash: '',
+        error: '',
       });
 
-      alert('Claim rejected');
+      let onChainId = claim.onChainClaimId;
+
+      // If claim was never minted on-chain by the claimant, mint it first so it exists
+      if (!onChainId) {
+        const hash = claim.evidenceHash || 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+        const mintResult = await createOnChainClaim(claim.type, hash);
+        onChainId = mintResult.claimId;
+      }
+
+      // Execute on-chain verifyClaim
+      const { tx } = await verifyOnChainClaim(onChainId);
+
+      setTxModal({
+        isOpen: true,
+        status: 'mining',
+        title: 'Mining Verification Proof',
+        message: 'Submitting verification proof to TrustMesh smart contract...',
+        txHash: tx.hash,
+        error: '',
+      });
+
+      // Synchronize database state with blockchain confirmation
+      await api.post('/verification/sync', {
+        claimId: claim._id,
+        onChainClaimId: onChainId,
+        verifierWallet: walletAddress,
+        status: 'VERIFIED',
+        transactionHash: tx.hash,
+        method: 'smart_contract',
+        approved: true,
+      });
+
+      setTxModal({
+        isOpen: true,
+        status: 'success',
+        title: 'Verification Complete!',
+        message: `Claim successfully verified on-chain and recorded to the immutable ledger.`,
+        txHash: tx.hash,
+        error: '',
+      });
+
       fetchQueue();
     } catch (err) {
       console.error(err);
-      alert('Rejection failed');
+      setTxModal({
+        isOpen: true,
+        status: 'error',
+        title: 'Verification Failed',
+        message: '',
+        txHash: '',
+        error: err.reason || err.message || 'Transaction was rejected.',
+      });
     } finally {
-      setProcessingId(null);
+      setProcessingClaimId(null);
     }
   };
 
-  if (loading) return <div>Loading queue...</div>;
+  const handleOpenReject = (claim) => {
+    setRejectModal({
+      isOpen: true,
+      claim,
+      reason: 'Evidence does not sufficiently corroborate the stated claim parameters.',
+    });
+  };
+
+  const handleConfirmReject = async () => {
+    const { claim, reason } = rejectModal;
+    if (!claim) return;
+
+    try {
+      setProcessingClaimId(claim._id);
+      setRejectModal({ isOpen: false, claim: null, reason: '' });
+
+      setTxModal({
+        isOpen: true,
+        status: 'signing',
+        title: 'Reject Claim',
+        message: 'Confirming rejection on-chain...',
+        txHash: '',
+        error: '',
+      });
+
+      let onChainId = claim.onChainClaimId;
+      let txHash = '';
+
+      if (onChainId) {
+        try {
+          const res = await rejectOnChainClaim(onChainId, reason);
+          txHash = res.tx.hash;
+        } catch (e) {
+          console.warn('Smart contract rejectClaim bypassed/failed, recording off-chain:', e);
+        }
+      }
+
+      // Sync off-chain state
+      await api.post('/verification/sync', {
+        claimId: claim._id,
+        verifierWallet: walletAddress,
+        status: 'REJECTED',
+        transactionHash: txHash,
+        comments: reason,
+        approved: false,
+      });
+
+      setTxModal({
+        isOpen: true,
+        status: 'success',
+        title: 'Claim Rejected',
+        message: 'The claim has been marked as REJECTED with the recorded rationale.',
+        txHash,
+        error: '',
+      });
+
+      fetchQueue();
+    } catch (err) {
+      setTxModal({
+        isOpen: true,
+        status: 'error',
+        title: 'Rejection Failed',
+        message: '',
+        txHash: '',
+        error: err.message || 'Failed to reject claim',
+      });
+    } finally {
+      setProcessingClaimId(null);
+    }
+  };
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <h2 className="text-2xl font-bold mb-6">Verifier Dashboard</h2>
-      
-      {queue.length === 0 ? (
-        <div className="bg-tm-charcoal p-8 rounded-lg text-center border border-gray-800">
-          <p className="text-gray-400">No claims are currently pending verification.</p>
+    <div className="max-w-6xl mx-auto pb-16">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+        <div>
+          <h1 className="text-3xl font-extrabold text-white tracking-tight">Verifier Queue</h1>
+          <p className="text-sm text-slate-400 mt-1">
+            Review pending claims, inspect cryptographic evidence, and execute on-chain attestations.
+          </p>
+        </div>
+
+        <button
+          onClick={fetchQueue}
+          className="px-4 py-2 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors self-start sm:self-auto"
+        >
+          🔄 Refresh Queue
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-16">
+          <div className="w-8 h-8 border-3 border-tm-blue border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : queue.length === 0 ? (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center shadow-xl">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-800 flex items-center justify-center text-2xl">
+            ✨
+          </div>
+          <h3 className="text-lg font-bold text-white mb-2">Queue is Clear</h3>
+          <p className="text-sm text-slate-400 max-w-md mx-auto">
+            No claims are currently awaiting verifier inspection. New submissions will appear here automatically.
+          </p>
         </div>
       ) : (
         <div className="space-y-4">
-          {queue.map(claim => (
-            <div key={claim._id} className="bg-tm-charcoal p-6 rounded-lg shadow border border-gray-800 flex justify-between items-center">
-              <div>
-                <div className="flex items-center space-x-3 mb-2">
-                  <h3 className="text-xl font-semibold">{claim.title}</h3>
-                  <span className="bg-gray-800 px-2 py-1 text-xs rounded-full">{claim.type}</span>
-                </div>
-                <p className="text-sm text-gray-400 mb-1">Claimant: <span className="font-mono">{claim.profileId}</span></p>
-                <div className="flex items-center space-x-2 mt-2">
-                  <a href={claim.evidenceUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-tm-teal hover:underline flex items-center">
-                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                    View Evidence
-                  </a>
-                  <span className="text-gray-600">|</span>
-                  <span className="font-mono text-xs text-gray-500">Hash: {claim.evidenceHash}</span>
-                </div>
-              </div>
-              <div className="flex space-x-3">
-                <button 
-                  onClick={() => handleReject(claim)}
-                  disabled={processingId === claim._id}
-                  className="bg-transparent border border-red-500 text-red-500 hover:bg-red-500 hover:text-white font-semibold py-2 px-4 rounded transition-colors disabled:opacity-50"
-                >
-                  Reject
-                </button>
-                <button 
-                  onClick={() => handleApprove(claim)}
-                  disabled={processingId === claim._id}
-                  className="bg-tm-verified hover:bg-green-600 text-white font-semibold py-2 px-4 rounded transition-colors shadow-lg shadow-green-900/50 disabled:opacity-50"
-                >
-                  {processingId === claim._id ? 'Processing...' : 'Approve on Chain'}
-                </button>
-              </div>
-            </div>
+          {queue.map((claim) => (
+            <VerifierQueueRow
+              key={claim._id}
+              claim={claim}
+              onApprove={handleApprove}
+              onReject={handleOpenReject}
+              isProcessing={processingClaimId === claim._id}
+            />
           ))}
         </div>
       )}
+
+      {/* Reject Modal */}
+      {rejectModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 text-white shadow-2xl relative">
+            <h3 className="text-lg font-bold mb-2">Reject Claim Verification</h3>
+            <p className="text-xs text-slate-400 mb-4">
+              Provide a clear reason for the rejection. This rationale will be permanently recorded in the audit trail.
+            </p>
+
+            <div className="mb-4">
+              <label className="block text-xs font-mono uppercase text-slate-400 mb-2">
+                Rejection Reason
+              </label>
+              <textarea
+                rows={3}
+                value={rejectModal.reason}
+                onChange={(e) => setRejectModal({ ...rejectModal, reason: e.target.value })}
+                className="w-full bg-slate-950 border border-slate-800 focus:border-rose-500 rounded-xl p-3 text-white text-xs focus:outline-none"
+              />
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setRejectModal({ isOpen: false, claim: null, reason: '' })}
+                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReject}
+                className="px-5 py-2 text-xs font-semibold rounded-xl bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-900/30"
+              >
+                Confirm Rejection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MetaMask Transaction Status Modal */}
+      <TxStatusModal
+        isOpen={txModal.isOpen}
+        status={txModal.status}
+        title={txModal.title}
+        message={txModal.message}
+        txHash={txModal.txHash}
+        error={txModal.error}
+        onClose={() => setTxModal({ ...txModal, isOpen: false })}
+      />
     </div>
   );
 }

@@ -22,6 +22,8 @@ function getDefaultContractConfig() {
     } catch (e) {
       console.warn('[web3Listener] Failed to parse contracts/TrustMesh.json:', e.message);
     }
+  }
+  return { address: null, abi: null };
 }
 
 /**

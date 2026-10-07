@@ -5,7 +5,9 @@
     "client": "cd client && npm run dev",
     "server": "cd server && npm run dev",
     "chain": "cd blockchain && npx hardhat node",
-    "deploy": "cd blockchain && npx hardhat run scripts/deploy.js --network ganache",
+    "deploy": "cd blockchain && npx hardhat run scripts/deploy.js --network localhost",
+    "deploy:ganache": "cd blockchain && npx hardhat run scripts/deploy.js --network ganache",
+    "test:blockchain": "npm --prefix blockchain test",
     "test:server": "npm --prefix server test",
     "demo": "npm --prefix server run demo"
   }
