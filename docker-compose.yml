@@ -39,7 +39,7 @@ services:
       MONGO_URI: mongodb://mongo:27017/trustmesh
       RPC_URL: http://blockchain:8545
       CONTRACT_ADDRESS: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
-      JWT_SECRET: trustmesh_docker_secret_31337
+      JWT_SECRET: ${JWT_SECRET:-trustmesh_dev_jwt_secret_key_31337}
       OTP_EXPIRY_MINUTES: 5
       MAX_UPLOAD_MB: 5
       EMAIL_HOST: ${EMAIL_HOST:-smtp.gmail.com}

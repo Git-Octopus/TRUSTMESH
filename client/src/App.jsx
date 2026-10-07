@@ -11,6 +11,7 @@ import ClaimDetails from './pages/ClaimDetails';
 import TrustDashboard from './pages/TrustDashboard';
 import VerificationHistory from './pages/VerificationHistory';
 import AdminVerifiers from './pages/AdminVerifiers';
+import Docs from './pages/Docs';
 
 import WalletConnectButton from './components/WalletConnectButton';
 
@@ -20,7 +21,7 @@ function Navbar() {
   return (
     <nav className="bg-slate-900/90 border-b border-slate-800 sticky top-0 z-40 backdrop-blur-md px-4 py-3.5">
       <div className="container mx-auto flex justify-between items-center">
-        <div className="flex items-center space-x-6 sm:space-x-8">
+        <div className="flex items-center space-x-5 sm:space-x-7">
           <Link to="/" className="flex items-center gap-2 group">
             <span className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 to-sky-400 flex items-center justify-center text-white text-base font-extrabold shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform">
               TM
@@ -70,6 +71,14 @@ function Navbar() {
         </div>
 
         <div className="flex items-center space-x-3">
+          <Link
+            to="/docs"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-xs font-bold text-sky-400 hover:text-sky-300 transition-all shadow-sm"
+          >
+            <span>📖</span>
+            <span className="hidden sm:inline">Documentation</span>
+            <span className="sm:hidden">Docs</span>
+          </Link>
           <WalletConnectButton />
         </div>
       </div>
@@ -149,10 +158,29 @@ export default function App() {
             <Route path="/history" element={<VerificationHistory />} />
             <Route path="/history/:claimId" element={<VerificationHistory />} />
 
+            {/* Protocol Documentation */}
+            <Route path="/docs" element={<Docs />} />
+
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
+        <footer className="border-t border-slate-800/80 bg-slate-950/60 py-6 px-4 mt-auto">
+          <div className="container mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-slate-300">TrustMesh Protocol</span>
+              <span>•</span>
+              <span>Decentralized Credential Verification</span>
+            </div>
+            <div className="flex items-center gap-4 text-slate-400">
+              <Link to="/docs" className="text-sky-400 hover:text-sky-300 transition-colors font-medium">
+                📖 Protocol Documentation
+              </Link>
+              <span>•</span>
+              <span className="font-mono text-[11px] text-slate-500">Contract: 0xe7f1...0512</span>
+            </div>
+          </div>
+        </footer>
       </div>
     </BrowserRouter>
   );

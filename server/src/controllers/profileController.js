@@ -114,7 +114,7 @@ exports.getProfileByWallet = async (req, res, next) => {
 exports.updateProfile = async (req, res, next) => {
   try {
     const userId = req.user._id || req.user.id;
-    const { headline, bio, education, skills, experience, profileImage, name } = req.body;
+    const { headline, bio, education, skills, experience, profileImage, name, email } = req.body;
 
     let profile = await Profile.findOne({ userId });
     if (!profile) {
@@ -130,14 +130,36 @@ exports.updateProfile = async (req, res, next) => {
 
     await profile.save();
 
-    if (name !== undefined) {
-      await User.findByIdAndUpdate(userId, { name });
+    const user = await User.findById(userId);
+    if (user) {
+      if (name !== undefined) user.name = name;
+      if (email !== undefined && email.trim() !== '') {
+        const cleanEmail = email.toLowerCase().trim();
+        // If email was modified to a different address, mark unverified until OTP confirmed
+        if (user.email && user.email !== cleanEmail) {
+          user.email = cleanEmail;
+          user.emailVerified = false;
+        } else if (!user.email) {
+          user.email = cleanEmail;
+        }
+      }
+      await user.save();
     }
 
     return res.status(200).json({
       success: true,
       message: 'Profile updated successfully.',
       profile,
+      user: user
+        ? {
+            id: user._id,
+            walletAddress: user.walletAddress,
+            name: user.name,
+            email: user.email,
+            emailVerified: user.emailVerified,
+            role: user.role,
+          }
+        : null,
     });
   } catch (error) {
     next(error);

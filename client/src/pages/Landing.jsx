@@ -43,10 +43,18 @@ export default function Landing() {
             </Link>
           </div>
         ) : (
-          <div className="p-1 bg-gradient-to-r from-blue-500 to-teal-400 rounded-2xl shadow-xl shadow-blue-500/20">
-            <div className="bg-slate-900 rounded-[14px] p-2">
-              <WalletConnectButton />
+          <div className="flex flex-col sm:flex-row items-center gap-4">
+            <div className="p-1 bg-gradient-to-r from-blue-500 to-teal-400 rounded-2xl shadow-xl shadow-blue-500/20">
+              <div className="bg-slate-900 rounded-[14px] p-2">
+                <WalletConnectButton />
+              </div>
             </div>
+            <Link
+              to="/docs"
+              className="px-6 py-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 text-sky-400 font-semibold text-xs transition-all border border-slate-800 hover:border-slate-700 flex items-center justify-center gap-2 shadow-lg"
+            >
+              <span>📖 Protocol Documentation →</span>
+            </Link>
           </div>
         )}
       </div>

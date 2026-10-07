@@ -13,4 +13,15 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // If server rotated secrets or token expired, cleanly clear stale state
+      useWallet.getState().disconnect();
+    }
+    return Promise.reject(error);
+  }
+);
+
 export default api;

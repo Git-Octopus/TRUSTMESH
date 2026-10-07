@@ -14,4 +14,7 @@ router.post('/register', authLimiter, authController.register);
 router.post('/send-otp', authMiddleware, requireRole('owner', 'verifier', 'admin'), authLimiter, authController.sendOtp);
 router.post('/verify-otp', authMiddleware, requireRole('owner', 'verifier', 'admin'), authLimiter, authController.verifyOtp);
 
+// Role switching for testing/demo
+router.post('/switch-role', authMiddleware, authController.switchRole);
+
 module.exports = router;

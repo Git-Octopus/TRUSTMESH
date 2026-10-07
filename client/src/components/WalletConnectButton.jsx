@@ -7,7 +7,7 @@ import { useNavigate } from 'react-router-dom';
 export default function WalletConnectButton() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { walletAddress, setWallet, disconnect } = useWallet();
+  const { walletAddress, role, setWallet, setRole, disconnect } = useWallet();
   const navigate = useNavigate();
 
   const connectWallet = async () => {
@@ -52,10 +52,11 @@ export default function WalletConnectButton() {
 
       const loginRes = await api.post('/auth/login', { walletAddress: address, signature });
       const { token, role, user } = loginRes.data;
+      const effectiveRole = role || user?.role || 'owner';
 
-      setWallet(address, token, role);
+      setWallet(address, token, effectiveRole, user);
       
-      if (!user.emailVerified) {
+      if (!user?.emailVerified) {
          navigate('/profile');
       } else {
          navigate('/claims');
@@ -69,15 +70,51 @@ export default function WalletConnectButton() {
     }
   };
 
+  const handleRoleChange = async (newRole) => {
+    try {
+      const res = await api.post('/auth/switch-role', { role: newRole });
+      if (res.data?.success) {
+        setRole(res.data.role);
+        if (res.data.token) {
+          useWallet.getState().setToken(res.data.token);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to switch role:', e);
+      // Fallback local switch
+      setRole(newRole);
+    }
+  };
+
   if (walletAddress) {
     return (
-      <div className="flex items-center space-x-4">
-        <span className="font-mono text-sm bg-tm-charcoal px-3 py-1 rounded border border-gray-700">
+      <div className="flex items-center space-x-3">
+        {/* Role Switcher & Badge */}
+        <div className="relative group">
+          <select
+            value={role || 'owner'}
+            onChange={(e) => handleRoleChange(e.target.value)}
+            className={`text-xs font-semibold px-2.5 py-1 rounded-lg border cursor-pointer bg-slate-900 focus:outline-none transition-colors ${
+              role === 'admin'
+                ? 'text-amber-300 border-amber-500/40 bg-amber-500/10'
+                : role === 'verifier'
+                ? 'text-tm-teal border-tm-teal/40 bg-tm-teal/10'
+                : 'text-slate-300 border-slate-700 bg-slate-800/80'
+            }`}
+            title="Switch Active Testing Role"
+          >
+            <option value="owner" className="bg-slate-900 text-slate-200">👤 User (Claimant)</option>
+            <option value="verifier" className="bg-slate-900 text-tm-teal">🔍 Verifier</option>
+            <option value="admin" className="bg-slate-900 text-amber-300">🛡️ Admin</option>
+          </select>
+        </div>
+
+        <span className="font-mono text-xs bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800 text-slate-300 shadow-inner">
           {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
         </span>
         <button 
           onClick={() => { disconnect(); navigate('/'); }}
-          className="text-gray-400 hover:text-white text-sm"
+          className="text-slate-400 hover:text-rose-400 text-xs font-medium transition-colors"
         >
           Disconnect
         </button>
