@@ -15,6 +15,7 @@ export default function Profile() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [isEmailVerified, setIsEmailVerified] = useState(false);
+  const [verifiedEmail, setVerifiedEmail] = useState('');
   const [headline, setHeadline] = useState('');
   const [bio, setBio] = useState('');
   const [profileImage, setProfileImage] = useState('');
@@ -43,6 +44,9 @@ export default function Profile() {
         setName(p.name || u.name || '');
         setEmail(u.email || '');
         setIsEmailVerified(Boolean(u.emailVerified));
+        if (u.emailVerified && u.email) {
+          setVerifiedEmail(u.email.toLowerCase().trim());
+        }
         setHeadline(p.headline || '');
         setBio(p.bio || '');
         setProfileImage(p.profileImage || '');
@@ -69,6 +73,7 @@ export default function Profile() {
 
       const payload = {
         name,
+        email,
         headline,
         bio,
         profileImage,
@@ -81,6 +86,13 @@ export default function Profile() {
       const res = await reqMethod('/profile', payload);
 
       setProfile(res.data.profile);
+      if (res.data.user) {
+        useWallet.getState().setUser(res.data.user);
+        setIsEmailVerified(Boolean(res.data.user.emailVerified));
+        if (res.data.user.emailVerified && res.data.user.email) {
+          setVerifiedEmail(res.data.user.email.toLowerCase().trim());
+        }
+      }
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus(''), 3000);
     } catch (err) {
@@ -157,9 +169,26 @@ export default function Profile() {
     const res = await verifyOtp(email, code);
     if (res && res.success) {
       setIsEmailVerified(true);
+      setVerifiedEmail(email.toLowerCase().trim());
+      if (res.token) {
+        useWallet.getState().setToken(res.token);
+      }
+      if (res.user) {
+        useWallet.getState().setUser(res.user);
+      }
       setTimeout(() => {
         setIsOtpModalOpen(false);
       }, 1200);
+    }
+  };
+
+  const handleEmailChange = (e) => {
+    const val = e.target.value;
+    setEmail(val);
+    if (verifiedEmail && val.trim().toLowerCase() === verifiedEmail.trim().toLowerCase()) {
+      setIsEmailVerified(true);
+    } else {
+      setIsEmailVerified(false);
     }
   };
 
@@ -266,7 +295,7 @@ export default function Profile() {
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={handleEmailChange}
                 placeholder="developer@domain.com"
                 className="flex-1 bg-slate-950 border border-slate-800 focus:border-tm-blue rounded-xl p-3 text-white text-sm focus:outline-none transition-colors"
                 required

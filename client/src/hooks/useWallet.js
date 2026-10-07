@@ -6,18 +6,27 @@ export const useWallet = create(
     (set) => ({
       walletAddress: null,
       jwt: null,
-      role: null,
+      role: 'owner',
+      user: null,
       profile: null,
 
-      setWallet: (address, token, role) => {
-        set({ walletAddress: address, jwt: token, role });
+      setWallet: (address, token, role, user = null) => {
+        set({
+          walletAddress: address,
+          jwt: token,
+          role: role || 'owner',
+          ...(user ? { user } : {}),
+        });
       },
 
+      setRole: (role) => set({ role }),
+      setUser: (user) => set({ user }),
+      setToken: (jwt) => set({ jwt }),
       setProfile: (profile) => set({ profile }),
 
       disconnect: () => {
-        set({ walletAddress: null, jwt: null, role: null, profile: null });
-      }
+        set({ walletAddress: null, jwt: null, role: null, user: null, profile: null });
+      },
     }),
     {
       name: 'trustmesh_auth',

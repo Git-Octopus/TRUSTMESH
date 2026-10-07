@@ -23,12 +23,15 @@ exports.getNonce = async (req, res, next) => {
     const normalizedAddress = walletAddress.toLowerCase();
     const nonce = crypto.randomBytes(16).toString('hex');
 
-    // Find existing user or create default 'owner'
+    const ADMIN_WALLET = (process.env.ADMIN_WALLET || '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266').toLowerCase();
+    const isAdmin = normalizedAddress === ADMIN_WALLET;
+
+    // Find existing user or create default
     let user = await User.findOne({ walletAddress: normalizedAddress });
     if (!user) {
       user = new User({
         walletAddress: normalizedAddress,
-        role: 'owner',
+        role: isAdmin ? 'admin' : 'owner',
         nonce,
       });
       await user.save();
@@ -37,6 +40,9 @@ exports.getNonce = async (req, res, next) => {
       await Profile.create({ userId: user._id });
     } else {
       user.nonce = nonce;
+      if (isAdmin && user.role !== 'admin') {
+        user.role = 'admin';
+      }
       await user.save();
     }
 
@@ -88,6 +94,11 @@ exports.login = async (req, res, next) => {
       });
     }
 
+    const ADMIN_WALLET = (process.env.ADMIN_WALLET || '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266').toLowerCase();
+    if (normalizedAddress === ADMIN_WALLET && user.role !== 'admin') {
+      user.role = 'admin';
+    }
+
     // Invalidate nonce after successful login
     user.nonce = null;
     await user.save();
@@ -109,6 +120,7 @@ exports.login = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       token,
+      role: user.role,
       user: {
         id: user._id,
         walletAddress: user.walletAddress,
@@ -177,15 +189,43 @@ exports.verifyOtp = async (req, res, next) => {
     }
 
     // Update user record
-    await User.findByIdAndUpdate(userId, {
-      email: email.toLowerCase().trim(),
-      emailVerified: true,
-    });
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      {
+        email: email.toLowerCase().trim(),
+        emailVerified: true,
+      },
+      { new: true }
+    );
+
+    // Re-issue JWT session with emailVerified: true
+    const secret = process.env.JWT_SECRET || 'trustmesh-jwt-secret-key';
+    const token = jwt.sign(
+      {
+        id: updatedUser._id,
+        userId: updatedUser._id,
+        walletAddress: updatedUser.walletAddress,
+        role: updatedUser.role,
+        emailVerified: true,
+      },
+      secret,
+      { expiresIn: '7d' }
+    );
 
     return res.status(200).json({
       success: true,
       message: 'Email successfully verified.',
+      token,
+      role: updatedUser.role,
       emailVerified: true,
+      user: {
+        id: updatedUser._id,
+        walletAddress: updatedUser.walletAddress,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        emailVerified: true,
+        role: updatedUser.role,
+      },
     });
   } catch (error) {
     next(error);
@@ -243,3 +283,53 @@ exports.register = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Switch role for testing/demo purposes.
+ * POST /api/auth/switch-role
+ */
+exports.switchRole = async (req, res, next) => {
+  try {
+    const { role } = req.body;
+    if (!['owner', 'verifier', 'admin'].includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid role. Must be owner, verifier, or admin.',
+      });
+    }
+
+    const userId = req.user._id || req.user.id;
+    const user = await User.findByIdAndUpdate(userId, { role }, { new: true });
+
+    const secret = process.env.JWT_SECRET || 'trustmesh-jwt-secret-key';
+    const token = jwt.sign(
+      {
+        id: user._id,
+        userId: user._id,
+        walletAddress: user.walletAddress,
+        role: user.role,
+        emailVerified: user.emailVerified,
+      },
+      secret,
+      { expiresIn: '7d' }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Role switched to ${role}.`,
+      token,
+      role: user.role,
+      user: {
+        id: user._id,
+        walletAddress: user.walletAddress,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
