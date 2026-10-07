@@ -59,12 +59,22 @@ export default function MyClaims() {
           </p>
         </div>
 
-        <Link
-          to="/claims/new"
-          className="px-5 py-2.5 rounded-xl bg-tm-blue hover:bg-blue-600 text-white font-semibold text-sm transition-all shadow-lg shadow-blue-500/20 inline-flex items-center gap-2 self-start sm:self-auto"
-        >
-          <span>+</span> Create New Claim
-        </Link>
+        <div className="flex items-center gap-3 self-start sm:self-auto">
+          <Link
+            to={`/proof-report/${walletAddress}`}
+            className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-sky-400 hover:text-sky-300 font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all"
+          >
+            <span>📄</span>
+            <span className="hidden sm:inline">Official Proof Report</span>
+            <span className="sm:hidden">Report</span>
+          </Link>
+          <Link
+            to="/claims/new"
+            className="px-5 py-2.5 rounded-xl bg-tm-blue hover:bg-blue-600 text-white font-semibold text-sm transition-all shadow-lg shadow-blue-500/20 inline-flex items-center gap-2"
+          >
+            <span>+</span> Create New Claim
+          </Link>
+        </div>
       </div>
 
       {/* Filter Tabs & Sort Toolbar */}

@@ -56,7 +56,13 @@ export default function WalletConnectButton() {
 
       setWallet(address, token, effectiveRole, user);
       
-      if (!user?.emailVerified) {
+      if (!user?.isOnboarded) {
+         // Modal will prompt for User/Verifier/Admin selection
+      } else if (effectiveRole === 'verifier') {
+         navigate('/verifier');
+      } else if (effectiveRole === 'admin') {
+         navigate('/admin');
+      } else if (!user?.emailVerified) {
          navigate('/profile');
       } else {
          navigate('/claims');
@@ -72,7 +78,8 @@ export default function WalletConnectButton() {
 
   const handleRoleChange = async (newRole) => {
     try {
-      const res = await api.post('/auth/switch-role', { role: newRole });
+      const serverRole = newRole === 'user' ? 'owner' : newRole;
+      const res = await api.post('/auth/switch-role', { role: serverRole });
       if (res.data?.success) {
         setRole(res.data.role);
         if (res.data.token) {
@@ -81,29 +88,38 @@ export default function WalletConnectButton() {
       }
     } catch (e) {
       console.error('Failed to switch role:', e);
-      // Fallback local switch
       setRole(newRole);
+    } finally {
+      if (newRole === 'verifier') {
+        navigate('/verifier');
+      } else if (newRole === 'admin') {
+        navigate('/admin');
+      } else {
+        navigate('/claims');
+      }
     }
   };
 
   if (walletAddress) {
+    const currentRole = role === 'admin' ? 'admin' : role === 'verifier' ? 'verifier' : 'user';
+
     return (
       <div className="flex items-center space-x-3">
         {/* Role Switcher & Badge */}
         <div className="relative group">
           <select
-            value={role || 'owner'}
+            value={currentRole}
             onChange={(e) => handleRoleChange(e.target.value)}
             className={`text-xs font-semibold px-2.5 py-1 rounded-lg border cursor-pointer bg-slate-900 focus:outline-none transition-colors ${
-              role === 'admin'
+              currentRole === 'admin'
                 ? 'text-amber-300 border-amber-500/40 bg-amber-500/10'
-                : role === 'verifier'
+                : currentRole === 'verifier'
                 ? 'text-tm-teal border-tm-teal/40 bg-tm-teal/10'
                 : 'text-slate-300 border-slate-700 bg-slate-800/80'
             }`}
             title="Switch Active Testing Role"
           >
-            <option value="owner" className="bg-slate-900 text-slate-200">👤 User (Claimant)</option>
+            <option value="user" className="bg-slate-900 text-slate-200">👤 User (Claimant)</option>
             <option value="verifier" className="bg-slate-900 text-tm-teal">🔍 Verifier</option>
             <option value="admin" className="bg-slate-900 text-amber-300">🛡️ Admin</option>
           </select>

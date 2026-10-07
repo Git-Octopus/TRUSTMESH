@@ -5,6 +5,7 @@ import { formatHash } from '../utils/formatHash';
 
 /**
  * VerifierQueueRow - Expandable row for Verifier queue with inline evidence preview
+ * and rich claimant identity context.
  */
 export default function VerifierQueueRow({
   claim,
@@ -16,14 +17,24 @@ export default function VerifierQueueRow({
 
   if (!claim) return null;
 
+  const claimantUser = claim.userId && typeof claim.userId === 'object' ? claim.userId : null;
   const claimantAddress =
-    claim.userId?.walletAddress ||
+    claimantUser?.walletAddress ||
     claim.profileId?.walletAddress ||
     (typeof claim.profileId === 'string' ? claim.profileId : '0x...');
 
-  const evidenceUrl = claim.evidenceUrl
-    ? (claim.evidenceUrl.startsWith('http') ? claim.evidenceUrl : `http://localhost:5000${claim.evidenceUrl}`)
-    : '';
+  const claimantName = claimantUser?.name || claim.profileId?.name || 'Anonymous Claimant';
+  const emailVerified = Boolean(claimantUser?.emailVerified);
+
+  // Normalize evidenceUrl to use relative /uploads path so Nginx proxies it seamlessly on port 5173
+  let evidenceUrl = claim.evidenceUrl || '';
+  if (evidenceUrl) {
+    if (evidenceUrl.startsWith('http://localhost:5000')) {
+      evidenceUrl = evidenceUrl.replace('http://localhost:5000', '');
+    } else if (!evidenceUrl.startsWith('http') && !evidenceUrl.startsWith('/')) {
+      evidenceUrl = `/${evidenceUrl}`;
+    }
+  }
 
   const isPdf = evidenceUrl.toLowerCase().endsWith('.pdf');
   const isImage = /\.(png|jpe?g|webp|gif)$/i.test(evidenceUrl);
@@ -45,25 +56,36 @@ export default function VerifierQueueRow({
             )}
           </div>
 
-          <h3 className="text-lg font-bold text-white mb-1">{claim.title}</h3>
+          <h3 className="text-lg font-bold text-white mb-1.5">{claim.title}</h3>
 
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400 font-mono">
-            <span>
-              Claimant: <span className="text-slate-300">{formatAddress(claimantAddress)}</span>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <span className="text-slate-400">Claimant:</span>
+              <strong className="text-white font-medium">{claimantName}</strong>
+              <span className="font-mono text-slate-400">({formatAddress(claimantAddress)})</span>
+              {emailVerified ? (
+                <span className="text-emerald-400 text-[10px] font-bold bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded">
+                  ✓ Email Verified
+                </span>
+              ) : (
+                <span className="text-amber-400 text-[10px] font-medium bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                  Unverified Email
+                </span>
+              )}
             </span>
             {claim.evidenceHash && (
-              <span>
-                Hash: <span className="text-tm-teal">{formatHash(claim.evidenceHash)}</span>
+              <span className="font-mono">
+                Fingerprint: <span className="text-tm-teal">{formatHash(claim.evidenceHash)}</span>
               </span>
             )}
             <span>
-              Date: <span className="text-slate-400">{new Date(claim.createdAt).toLocaleDateString()}</span>
+              Submitted: <span className="text-slate-300">{new Date(claim.createdAt).toLocaleDateString()}</span>
             </span>
           </div>
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <button
             type="button"
             onClick={() => setIsExpanded(!isExpanded)}
@@ -85,7 +107,14 @@ export default function VerifierQueueRow({
             disabled={isProcessing}
             className="px-4 py-2 text-xs font-semibold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/30 transition-colors disabled:opacity-40 flex items-center gap-1.5"
           >
-            {isProcessing ? 'Processing...' : 'Approve on Chain ⚡'}
+            {isProcessing ? (
+              <>
+                <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Processing...</span>
+              </>
+            ) : (
+              <span>Approve on Chain ⚡</span>
+            )}
           </button>
         </div>
       </div>
@@ -93,6 +122,24 @@ export default function VerifierQueueRow({
       {/* Expanded Details & Evidence Viewer */}
       {isExpanded && (
         <div className="p-6 bg-slate-950/70 border-t border-slate-800/80 space-y-6 animate-fadeIn">
+          {/* Claimant Context Summary */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-900/80 p-4 rounded-xl border border-slate-800 text-xs">
+            <div>
+              <span className="text-slate-400 block mb-0.5">Claimant Full Name:</span>
+              <span className="text-slate-100 font-bold text-sm">{claimantName}</span>
+            </div>
+            <div>
+              <span className="text-slate-400 block mb-0.5">Wallet Address:</span>
+              <span className="font-mono text-slate-200 select-all">{claimantAddress}</span>
+            </div>
+            <div>
+              <span className="text-slate-400 block mb-0.5">Email Status:</span>
+              <span className={emailVerified ? 'text-emerald-400 font-semibold' : 'text-amber-400'}>
+                {emailVerified ? '✓ Cryptographically Verified' : 'Pending Verification'}
+              </span>
+            </div>
+          </div>
+
           <div>
             <h4 className="text-xs font-mono uppercase tracking-wider text-slate-400 mb-1">
               Claim Description
@@ -124,13 +171,13 @@ export default function VerifierQueueRow({
                   href={evidenceUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-tm-teal hover:underline flex items-center gap-1"
+                  className="text-xs text-tm-teal hover:underline flex items-center gap-1 font-semibold"
                 >
                   Open Original Document ↗
                 </a>
               </div>
 
-              <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-900 p-2 flex justify-center items-center min-h-[220px]">
+              <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-900 p-2 flex justify-center items-center min-h-[260px]">
                 {isImage ? (
                   <img
                     src={evidenceUrl}
@@ -138,14 +185,28 @@ export default function VerifierQueueRow({
                     className="max-h-96 max-w-full rounded-lg object-contain shadow-md"
                   />
                 ) : isPdf ? (
-                  <iframe
-                    src={evidenceUrl}
-                    title="PDF Evidence Viewer"
-                    className="w-full h-96 rounded-lg border-0"
-                  />
+                  <div className="w-full flex flex-col items-center">
+                    <object
+                      data={evidenceUrl}
+                      type="application/pdf"
+                      className="w-full h-96 rounded-lg border-0"
+                    >
+                      <div className="text-center py-8">
+                        <p className="text-sm text-slate-300 mb-3">PDF preview unavailable in current browser view.</p>
+                        <a
+                          href={evidenceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold inline-block"
+                        >
+                          Open PDF in New Window ↗
+                        </a>
+                      </div>
+                    </object>
+                  </div>
                 ) : (
                   <div className="text-center py-6">
-                    <p className="text-sm text-slate-400 mb-3">Evidence document file attached.</p>
+                    <p className="text-sm text-slate-400 mb-3">Evidence document attached ({claim.title}).</p>
                     <a
                       href={evidenceUrl}
                       download

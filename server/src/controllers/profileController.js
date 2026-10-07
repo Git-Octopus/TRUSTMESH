@@ -2,6 +2,7 @@ const Profile = require('../models/Profile');
 const User = require('../models/User');
 const Claim = require('../models/Claim');
 const { calculateProfileTrustScore } = require('../services/trustScoreService');
+const { hashFile } = require('../services/hashService');
 
 /**
  * Create or initialize profile for authenticated user.
@@ -81,8 +82,36 @@ exports.getProfileByWallet = async (req, res, next) => {
       profile = await Profile.create({ userId: user._id });
     }
 
-    // Fetch verified and public claims
+    // Fetch verified and public claims and enrich with verifier email and organization
     const claims = await Claim.find({ profileId: profile._id }).sort({ createdAt: -1 });
+
+    const enrichedClaims = await Promise.all(
+      claims.map(async (c) => {
+        const cObj = c.toObject();
+        if (cObj.verification?.verifierWallet || cObj.verification?.verifierId) {
+          const verifierWallet = (cObj.verification.verifierWallet || '').toLowerCase();
+          const verifierUser = await User.findOne({
+            $or: [
+              ...(verifierWallet ? [{ walletAddress: verifierWallet }] : []),
+              ...(cObj.verification.verifierId ? [{ _id: cObj.verification.verifierId }] : []),
+            ],
+          }).select('name email organization walletAddress role');
+
+          if (verifierUser) {
+            cObj.verification.verifierName = verifierUser.name || 'Institutional Verifier';
+            cObj.verification.verifierEmail = verifierUser.email || 'trushmesh.official@gmail.com';
+            cObj.verification.verifierOrg = verifierUser.organization?.name || 'TrustMesh Authorized Authority';
+            cObj.verification.verifierDesignation = verifierUser.organization?.designation || 'Accredited Validator';
+          } else {
+            cObj.verification.verifierName = 'Institutional Verifier';
+            cObj.verification.verifierEmail = 'trushmesh.official@gmail.com';
+            cObj.verification.verifierOrg = 'TrustMesh Authorized Authority';
+            cObj.verification.verifierDesignation = 'Accredited Validator';
+          }
+        }
+        return cObj;
+      })
+    );
 
     // Compute live trust score
     const trustScore = await calculateProfileTrustScore(profile._id);
@@ -99,7 +128,7 @@ exports.getProfileByWallet = async (req, res, next) => {
         createdAt: user.createdAt,
       },
       profile,
-      claims,
+      claims: enrichedClaims,
       trustScore,
     });
   } catch (error) {
@@ -160,6 +189,80 @@ exports.updateProfile = async (req, res, next) => {
             role: user.role,
           }
         : null,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Upload a document to user profile (Identity, Degree, Resume, etc.)
+ * POST /api/profile/documents
+ */
+exports.uploadProfileDocument = async (req, res, next) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No document file uploaded.' });
+    }
+
+    const { category, title } = req.body;
+    const validCategories = ['identity', 'resume', 'degree', 'employment', 'organization', 'other'];
+    const chosenCategory = validCategories.includes(category) ? category : 'other';
+
+    let profile = await Profile.findOne({ userId });
+    if (!profile) {
+      profile = new Profile({ userId });
+    }
+
+    const fileHash = await hashFile(req.file.path);
+    const docEntry = {
+      category: chosenCategory,
+      title: title && title.trim() ? title.trim() : req.file.originalname,
+      documentUrl: `/uploads/${req.file.filename}`,
+      fileHash,
+      fileName: req.file.originalname,
+      fileSize: req.file.size,
+      uploadedAt: new Date(),
+    };
+
+    profile.profileDocuments.push(docEntry);
+    await profile.save();
+
+    return res.status(201).json({
+      success: true,
+      message: 'Profile document uploaded and cryptographically indexed.',
+      document: docEntry,
+      profileDocuments: profile.profileDocuments,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Delete a profile document
+ * DELETE /api/profile/documents/:docId
+ */
+exports.deleteProfileDocument = async (req, res, next) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const { docId } = req.params;
+
+    const profile = await Profile.findOne({ userId });
+    if (!profile) {
+      return res.status(404).json({ success: false, message: 'Profile not found.' });
+    }
+
+    profile.profileDocuments = profile.profileDocuments.filter(
+      (doc) => doc._id.toString() !== docId
+    );
+    await profile.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Profile document removed.',
+      profileDocuments: profile.profileDocuments,
     });
   } catch (error) {
     next(error);

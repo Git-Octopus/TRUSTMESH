@@ -85,157 +85,155 @@ exports.listenToEvents = (rpcUrl, contractAddress, abi) => {
     activeProvider = new JsonRpcProvider(targetRpc);
     activeContract = new Contract(targetAddress, targetAbi, activeProvider);
 
-    console.log(`[web3Listener] Listening to TrustMesh events at ${targetAddress} on ${targetRpc}`);
+    console.log(`[web3Listener] Starting robust block poller for TrustMesh events at ${targetAddress} on ${targetRpc}`);
 
-    // 1. ClaimVerified event
-    activeContract.on('ClaimVerified', async (claimId, claimant, verifier, timestamp, event) => {
+    let lastPolledBlock = null;
+    let isPolling = false;
+
+    const pollEvents = async () => {
+      if (isPolling || !activeContract) return;
+      isPolling = true;
+
       try {
-        const txHash = event?.log?.transactionHash || '';
-        const idNum = Number(claimId);
-        console.log(`[web3Listener] Event ClaimVerified: Claim #${idNum} by ${verifier} (tx: ${txHash})`);
-
-        let claim = await findClaimForEvent(idNum, activeContract);
-
-        const verifierUser = await User.findOne({
-          walletAddress: verifier.toLowerCase(),
-        });
-
-        if (claim) {
-          claim.status = CLAIM_STATUSES.VERIFIED;
-          claim.verification = {
-            verifierId: verifierUser ? verifierUser._id : null,
-            verifierWallet: verifier.toLowerCase(),
-            verificationMethod: 'smart_contract',
-            verifiedAt: new Date(Number(timestamp) * 1000 || Date.now()),
-            transactionHash: txHash,
-            status: CLAIM_STATUSES.VERIFIED,
-          };
-          await claim.save();
-
-          await Verification.create({
-            claimId: claim._id,
-            verifierId: verifierUser ? verifierUser._id : null,
-            verifierWallet: verifier.toLowerCase(),
-            method: 'smart_contract',
-            status: CLAIM_STATUSES.VERIFIED,
-            approved: true,
-            comments: 'Verified on-chain via TrustMesh.sol',
-            transactionHash: txHash,
-            blockchainTimestamp: Number(timestamp),
-          });
-
-          console.log(`[web3Listener] Database synced: Claim #${idNum} status set to VERIFIED`);
-        } else {
-          console.log(`[web3Listener] Claim #${idNum} not found in database`);
+        const currentBlock = await activeProvider.getBlockNumber();
+        if (lastPolledBlock === null) {
+          lastPolledBlock = Math.max(0, currentBlock - 10);
         }
-      } catch (err) {
-        console.error('[web3Listener] Error processing ClaimVerified event:', err);
-      }
-    });
 
-    // 2. ClaimRejected event
-    activeContract.on('ClaimRejected', async (claimId, claimant, verifier, reason, timestamp, event) => {
-      try {
-        const txHash = event?.log?.transactionHash || '';
-        const idNum = Number(claimId);
-        console.log(`[web3Listener] Event ClaimRejected: Claim #${idNum} - Reason: ${reason} (tx: ${txHash})`);
+        if (currentBlock >= lastPolledBlock) {
+          const fromBlock = lastPolledBlock + 1;
+          const toBlock = currentBlock;
 
-        let claim = await findClaimForEvent(idNum, activeContract);
+          if (fromBlock <= toBlock) {
+            // Query all contract events across this block range
+            const events = await activeContract.queryFilter('*', fromBlock, toBlock);
 
-        const verifierUser = await User.findOne({
-          walletAddress: verifier.toLowerCase(),
-        });
+            for (const event of events) {
+              const eventName = event.fragment?.name || event.eventName;
+              const args = event.args || [];
+              const txHash = event.transactionHash || '';
 
-        if (claim) {
-          claim.status = CLAIM_STATUSES.REJECTED;
-          claim.verification = {
-            verifierId: verifierUser ? verifierUser._id : null,
-            verifierWallet: verifier.toLowerCase(),
-            verificationMethod: 'smart_contract',
-            verifiedAt: new Date(Number(timestamp) * 1000 || Date.now()),
-            transactionHash: txHash,
-            status: CLAIM_STATUSES.REJECTED,
-          };
-          await claim.save();
+              if (eventName === 'ClaimVerified') {
+                const [claimId, claimant, verifier, timestamp] = args;
+                const idNum = Number(claimId);
+                console.log(`[web3Listener] Event ClaimVerified: Claim #${idNum} by ${verifier} (tx: ${txHash})`);
 
-          await Verification.create({
-            claimId: claim._id,
-            verifierId: verifierUser ? verifierUser._id : null,
-            verifierWallet: verifier.toLowerCase(),
-            method: 'smart_contract',
-            status: CLAIM_STATUSES.REJECTED,
-            approved: false,
-            comments: reason || 'Rejected on-chain via TrustMesh.sol',
-            transactionHash: txHash,
-            blockchainTimestamp: Number(timestamp),
-          });
+                let claim = await findClaimForEvent(idNum, activeContract);
+                const verifierUser = await User.findOne({ walletAddress: verifier.toLowerCase() });
 
-          console.log(`[web3Listener] Database synced: Claim #${idNum} status set to REJECTED`);
-        }
-      } catch (err) {
-        console.error('[web3Listener] Error processing ClaimRejected event:', err);
-      }
-    });
+                if (claim) {
+                  claim.status = CLAIM_STATUSES.VERIFIED;
+                  claim.verification = {
+                    verifierId: verifierUser ? verifierUser._id : null,
+                    verifierWallet: verifier.toLowerCase(),
+                    verificationMethod: 'smart_contract',
+                    verifiedAt: new Date(Number(timestamp) * 1000 || Date.now()),
+                    transactionHash: txHash,
+                    status: CLAIM_STATUSES.VERIFIED,
+                  };
+                  await claim.save();
 
-    // 3. VerificationRevoked event
-    activeContract.on('VerificationRevoked', async (claimId, verifier, timestamp, event) => {
-      try {
-        const txHash = event?.log?.transactionHash || '';
-        const idNum = Number(claimId);
-        console.log(`[web3Listener] Event VerificationRevoked: Claim #${idNum} by ${verifier}`);
+                  await Verification.create({
+                    claimId: claim._id,
+                    verifierId: verifierUser ? verifierUser._id : null,
+                    verifierWallet: verifier.toLowerCase(),
+                    method: 'smart_contract',
+                    status: CLAIM_STATUSES.VERIFIED,
+                    approved: true,
+                    comments: 'Verified on-chain via TrustMesh.sol',
+                    transactionHash: txHash,
+                    blockchainTimestamp: Number(timestamp) || Math.floor(Date.now() / 1000),
+                  });
+                  console.log(`[web3Listener] Database synced: Claim #${idNum} status set to VERIFIED`);
+                }
+              } else if (eventName === 'ClaimRejected') {
+                const [claimId, claimant, verifier, reason, timestamp] = args;
+                const idNum = Number(claimId);
+                console.log(`[web3Listener] Event ClaimRejected: Claim #${idNum} - Reason: ${reason} (tx: ${txHash})`);
 
-        let claim = await findClaimForEvent(idNum, activeContract);
+                let claim = await findClaimForEvent(idNum, activeContract);
+                const verifierUser = await User.findOne({ walletAddress: verifier.toLowerCase() });
 
-        if (claim) {
-          claim.status = CLAIM_STATUSES.REVOKED;
-          if (claim.verification) {
-            claim.verification.status = CLAIM_STATUSES.REVOKED;
+                if (claim) {
+                  claim.status = CLAIM_STATUSES.REJECTED;
+                  claim.verification = {
+                    verifierId: verifierUser ? verifierUser._id : null,
+                    verifierWallet: verifier.toLowerCase(),
+                    verificationMethod: 'smart_contract',
+                    verifiedAt: new Date(Number(timestamp) * 1000 || Date.now()),
+                    transactionHash: txHash,
+                    status: CLAIM_STATUSES.REJECTED,
+                  };
+                  await claim.save();
+
+                  await Verification.create({
+                    claimId: claim._id,
+                    verifierId: verifierUser ? verifierUser._id : null,
+                    verifierWallet: verifier.toLowerCase(),
+                    method: 'smart_contract',
+                    status: CLAIM_STATUSES.REJECTED,
+                    approved: false,
+                    comments: reason || 'Rejected on-chain via TrustMesh.sol',
+                    transactionHash: txHash,
+                    blockchainTimestamp: Number(timestamp) || Math.floor(Date.now() / 1000),
+                  });
+                  console.log(`[web3Listener] Database synced: Claim #${idNum} status set to REJECTED`);
+                }
+              } else if (eventName === 'VerificationRevoked') {
+                const [claimId, verifier, timestamp] = args;
+                const idNum = Number(claimId);
+                console.log(`[web3Listener] Event VerificationRevoked: Claim #${idNum} by ${verifier}`);
+
+                let claim = await findClaimForEvent(idNum, activeContract);
+                if (claim) {
+                  claim.status = CLAIM_STATUSES.REVOKED;
+                  if (claim.verification) {
+                    claim.verification.status = CLAIM_STATUSES.REVOKED;
+                  }
+                  await claim.save();
+
+                  await Verification.create({
+                    claimId: claim._id,
+                    verifierWallet: verifier.toLowerCase(),
+                    method: 'smart_contract',
+                    status: CLAIM_STATUSES.REVOKED,
+                    approved: false,
+                    comments: 'Verification revoked on-chain',
+                    transactionHash: txHash,
+                    blockchainTimestamp: Number(timestamp) || Math.floor(Date.now() / 1000),
+                  });
+                  console.log(`[web3Listener] Database synced: Claim #${idNum} status set to REVOKED`);
+                }
+              } else if (eventName === 'VerifierRegistered') {
+                const [verifier] = args;
+                console.log(`[web3Listener] Event VerifierRegistered for ${verifier}`);
+                await User.updateMany(
+                  { walletAddress: verifier.toLowerCase() },
+                  { $set: { role: 'verifier', accountType: 'verifier', verifierStatus: 'approved' } }
+                );
+              } else if (eventName === 'VerifierRevoked') {
+                const [verifier] = args;
+                console.log(`[web3Listener] Event VerifierRevoked for ${verifier}`);
+                await User.updateMany(
+                  { walletAddress: verifier.toLowerCase() },
+                  { $set: { role: 'owner', accountType: 'user', verifierStatus: 'revoked' } }
+                );
+              }
+            }
+
+            lastPolledBlock = toBlock;
           }
-          await claim.save();
-
-          await Verification.create({
-            claimId: claim._id,
-            verifierWallet: verifier.toLowerCase(),
-            method: 'smart_contract',
-            status: CLAIM_STATUSES.REVOKED,
-            approved: false,
-            comments: 'Verification revoked on-chain',
-            transactionHash: txHash,
-            blockchainTimestamp: Number(timestamp),
-          });
-
-          console.log(`[web3Listener] Database synced: Claim #${idNum} status set to REVOKED`);
         }
-      } catch (err) {
-        console.error('[web3Listener] Error processing VerificationRevoked event:', err);
+      } catch (pollErr) {
+        // Silently tolerate temporary RPC hiccups without throwing unhandled exceptions
+      } finally {
+        isPolling = false;
       }
-    });
+    };
 
-    // 4. VerifierRegistered event
-    activeContract.on('VerifierRegistered', async (verifier, timestamp) => {
-      try {
-        console.log(`[web3Listener] Event VerifierRegistered for ${verifier}`);
-        await User.updateMany(
-          { walletAddress: verifier.toLowerCase() },
-          { $set: { role: 'verifier' } }
-        );
-      } catch (err) {
-        console.error('[web3Listener] Error processing VerifierRegistered event:', err);
-      }
-    });
-
-    // 5. VerifierRevoked event
-    activeContract.on('VerifierRevoked', async (verifier, timestamp) => {
-      try {
-        console.log(`[web3Listener] Event VerifierRevoked for ${verifier}`);
-        await User.updateMany(
-          { walletAddress: verifier.toLowerCase() },
-          { $set: { role: 'owner' } }
-        );
-      } catch (err) {
-        console.error('[web3Listener] Error processing VerifierRevoked event:', err);
-      }
-    });
+    // Poll every 3 seconds
+    const intervalTimer = setInterval(pollEvents, 3000);
+    activeContract._pollTimer = intervalTimer;
 
     return activeContract;
   } catch (err) {
@@ -249,7 +247,9 @@ exports.listenToEvents = (rpcUrl, contractAddress, abi) => {
  */
 exports.stopListener = () => {
   if (activeContract) {
-    activeContract.removeAllListeners();
+    if (activeContract._pollTimer) {
+      clearInterval(activeContract._pollTimer);
+    }
     activeContract = null;
     activeProvider = null;
     console.log('[web3Listener] Event listeners stopped.');

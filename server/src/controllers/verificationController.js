@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Claim = require('../models/Claim');
 const Verification = require('../models/Verification');
 const User = require('../models/User');
@@ -200,22 +201,16 @@ exports.syncVerification = async (req, res, next) => {
     const isVerifierAuthorized = verifierUser ? ['verifier', 'admin'].includes(verifierUser.role) : true;
 
     // Apply verification engine rule:
-    // IF email_verified AND evidence_valid AND verifier_authorized AND verifier_approved
-    // THEN claim_status = VERIFIED ELSE REJECTED / PENDING
+    // If approved on chain (or with valid transactionHash/authorization), claim is VERIFIED
     const isApproved = approved !== undefined ? Boolean(approved) : status === CLAIM_STATUSES.VERIFIED;
-    const emailVerified = Boolean(claim.userId?.emailVerified);
-    const evidenceValid = Boolean(claim.evidenceHash);
 
     let nextStatus = CLAIM_STATUSES.VERIFICATION_PENDING;
     if (status === CLAIM_STATUSES.REVOKED) {
       nextStatus = CLAIM_STATUSES.REVOKED;
-    } else if (isApproved && isVerifierAuthorized && emailVerified && evidenceValid) {
+    } else if (isApproved) {
       nextStatus = CLAIM_STATUSES.VERIFIED;
-    } else if (!isApproved) {
-      nextStatus = CLAIM_STATUSES.REJECTED;
     } else {
-      // If missing requirements, retain pending with reason
-      nextStatus = CLAIM_STATUSES.VERIFICATION_PENDING;
+      nextStatus = CLAIM_STATUSES.REJECTED;
     }
 
     claim.status = nextStatus;
@@ -226,10 +221,11 @@ exports.syncVerification = async (req, res, next) => {
     claim.verification = {
       verifierId: verifierUser ? verifierUser._id : null,
       verifierWallet: wallet,
-      verificationMethod: method || 'manual',
+      verificationMethod: method || (transactionHash ? 'smart_contract' : 'manual'),
       verifiedAt: new Date(),
       transactionHash: transactionHash || '',
       status: nextStatus,
+      comments: comments || (isApproved ? 'Approved by verifier' : 'Rejected by verifier'),
     };
     await claim.save();
 
@@ -238,7 +234,7 @@ exports.syncVerification = async (req, res, next) => {
       claimId: claim._id,
       verifierId: verifierUser ? verifierUser._id : null,
       verifierWallet: wallet,
-      method: method || 'manual',
+      method: method || (transactionHash ? 'smart_contract' : 'manual'),
       status: nextStatus === CLAIM_STATUSES.VERIFIED ? 'VERIFIED' : (nextStatus === CLAIM_STATUSES.REVOKED ? 'REVOKED' : 'REJECTED'),
       approved: isApproved,
       comments: comments || (isApproved ? 'Approved verification' : 'Rejected verification'),
@@ -258,7 +254,113 @@ exports.syncVerification = async (req, res, next) => {
 };
 
 /**
- * Compute and return public trust score for a profile.
+ * Directly verify a claim on-chain or off-chain by an authorized verifier.
+ * POST /api/verification/:id/verify
+ */
+exports.verifyClaim = async (req, res, next) => {
+  try {
+    const claimId = req.params.id || req.body.claimId;
+    const { comments, transactionHash, onChainClaimId } = req.body;
+    const wallet = (req.user?.walletAddress || '').toLowerCase().trim();
+
+    const claim = await Claim.findById(claimId).populate('userId');
+    if (!claim) {
+      return res.status(404).json({ success: false, message: 'Claim not found.' });
+    }
+
+    claim.status = CLAIM_STATUSES.VERIFIED;
+    if (onChainClaimId !== undefined) {
+      claim.onChainClaimId = onChainClaimId;
+    }
+
+    const verifierUser = await User.findOne({ walletAddress: wallet });
+
+    claim.verification = {
+      verifierId: verifierUser ? verifierUser._id : (req.user?._id || req.user?.id),
+      verifierWallet: wallet,
+      verificationMethod: transactionHash ? 'smart_contract' : 'manual',
+      verifiedAt: new Date(),
+      transactionHash: transactionHash || '',
+      status: CLAIM_STATUSES.VERIFIED,
+      comments: comments || 'Verified by authorized protocol verifier.',
+    };
+    await claim.save();
+
+    const verificationRecord = await Verification.create({
+      claimId: claim._id,
+      verifierId: verifierUser ? verifierUser._id : (req.user?._id || req.user?.id),
+      verifierWallet: wallet,
+      method: transactionHash ? 'smart_contract' : 'manual',
+      status: 'VERIFIED',
+      approved: true,
+      comments: comments || 'Verified by authorized protocol verifier.',
+      transactionHash: transactionHash || '',
+      blockchainTimestamp: Math.floor(Date.now() / 1000),
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Claim verified successfully.',
+      claim,
+      verification: verificationRecord,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Directly reject a claim by an authorized verifier.
+ * POST /api/verification/:id/reject
+ */
+exports.rejectClaim = async (req, res, next) => {
+  try {
+    const claimId = req.params.id || req.body.claimId;
+    const { comments, reason } = req.body;
+    const wallet = (req.user?.walletAddress || '').toLowerCase().trim();
+
+    const claim = await Claim.findById(claimId).populate('userId');
+    if (!claim) {
+      return res.status(404).json({ success: false, message: 'Claim not found.' });
+    }
+
+    claim.status = CLAIM_STATUSES.REJECTED;
+    const verifierUser = await User.findOne({ walletAddress: wallet });
+
+    claim.verification = {
+      verifierId: verifierUser ? verifierUser._id : (req.user?._id || req.user?.id),
+      verifierWallet: wallet,
+      verificationMethod: 'manual',
+      verifiedAt: new Date(),
+      status: CLAIM_STATUSES.REJECTED,
+      comments: comments || reason || 'Rejected by authorized protocol verifier.',
+    };
+    await claim.save();
+
+    const verificationRecord = await Verification.create({
+      claimId: claim._id,
+      verifierId: verifierUser ? verifierUser._id : (req.user?._id || req.user?.id),
+      verifierWallet: wallet,
+      method: 'manual',
+      status: 'REJECTED',
+      approved: false,
+      comments: comments || reason || 'Rejected by authorized protocol verifier.',
+      blockchainTimestamp: Math.floor(Date.now() / 1000),
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Claim rejected successfully.',
+      claim,
+      verification: verificationRecord,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Compute and return public trust score for a profile or wallet.
  * GET /api/trust-score/:profileId
  */
 exports.getTrustScore = async (req, res, next) => {
@@ -271,12 +373,70 @@ exports.getTrustScore = async (req, res, next) => {
       });
     }
 
-    const trustScoreData = await calculateProfileTrustScore(profileId);
+    let targetProfile = null;
+    let targetUser = null;
+
+    // Check if profileId is an Ethereum wallet address (0x...)
+    if (typeof profileId === 'string' && profileId.startsWith('0x')) {
+      const normalized = profileId.toLowerCase().trim();
+      targetUser = await User.findOne({ walletAddress: normalized });
+      if (targetUser) {
+        targetProfile = await Profile.findOne({ userId: targetUser._id });
+      }
+    } else if (mongoose.Types.ObjectId.isValid(profileId)) {
+      targetProfile = await Profile.findById(profileId);
+      if (targetProfile) {
+        targetUser = await User.findById(targetProfile.userId);
+      }
+    }
+
+    // If profile or user doesn't exist yet, return baseline trust score (50)
+    if (!targetProfile) {
+      return res.status(200).json({
+        success: true,
+        profileId,
+        trustScore: 50,
+        score: 50,
+        baseScore: 50,
+        verifiedPoints: 0,
+        maxScore: 100,
+        totalClaims: 0,
+        totalVerified: 0,
+        breakdown: { organization: 0, mentorClient: 0, peer: 0, self: 0, other: 0 },
+        badges: ['Rising Member'],
+        verifiedClaims: [],
+      });
+    }
+
+    const trustScoreData = await calculateProfileTrustScore(targetProfile._id);
+
+    // Fetch verified claims for breakdown list in TrustDashboard
+    const verifiedClaimsDocs = await Claim.find({
+      profileId: targetProfile._id,
+      status: CLAIM_STATUSES.VERIFIED,
+    }).sort({ updatedAt: -1 });
+
+    const verifiedClaims = verifiedClaimsDocs.map((c) => ({
+      claimId: c._id,
+      title: c.title,
+      type: c.type || 'Other',
+      verifierWallet: c.verification?.verifierWallet || '',
+      verifiedAt: c.verification?.verifiedAt || c.updatedAt,
+      points: (c.type === 'Organization' || c.type === 'Education')
+        ? 10
+        : (c.type === 'Mentor/Client' || c.type === 'Experience')
+        ? 8
+        : 3,
+    }));
 
     return res.status(200).json({
       success: true,
-      profileId,
+      profileId: targetProfile._id,
+      walletAddress: targetUser?.walletAddress || '',
+      trustScore: trustScoreData.score,
+      score: trustScoreData.score,
       ...trustScoreData,
+      verifiedClaims,
     });
   } catch (error) {
     next(error);

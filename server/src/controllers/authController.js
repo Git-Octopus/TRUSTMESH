@@ -128,6 +128,12 @@ exports.login = async (req, res, next) => {
         email: user.email,
         emailVerified: user.emailVerified,
         role: user.role,
+        accountType: user.accountType || null,
+        verifierStatus: user.verifierStatus || (user.role === 'verifier' ? 'approved' : 'none'),
+        organization: user.organization || {},
+        isSuspended: Boolean(user.isSuspended),
+        suspensionReason: user.suspensionReason || '',
+        isOnboarded: Boolean(user.isOnboarded && user.accountType),
       },
     });
   } catch (error) {
@@ -326,6 +332,146 @@ exports.switchRole = async (req, res, next) => {
         email: user.email,
         emailVerified: user.emailVerified,
         role: user.role,
+        accountType: user.accountType,
+        verifierStatus: user.verifierStatus,
+        organization: user.organization,
+        isSuspended: Boolean(user.isSuspended),
+        suspensionReason: user.suspensionReason || '',
+        isOnboarded: user.isOnboarded,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Onboard newly connected wallet with designated account type.
+ * POST /api/auth/onboard
+ */
+exports.onboard = async (req, res, next) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const { accountType, name, organization, adminSecretKey } = req.body;
+
+    if (!['user', 'verifier', 'admin'].includes(accountType)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account type must be "user", "verifier", or "admin".',
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const ADMIN_WALLET = (process.env.ADMIN_WALLET || '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266').toLowerCase();
+    const ADMIN_SECRET = process.env.ADMIN_SECRET_KEY || 'trustmesh_admin_secret_2026';
+
+    if (accountType === 'user') {
+      user.accountType = 'user';
+      user.role = 'owner';
+      user.verifierStatus = 'none';
+      user.isOnboarded = true;
+    } else if (accountType === 'verifier') {
+      user.accountType = 'verifier';
+      user.role = 'owner'; // Unapproved until admin authorizes
+      user.verifierStatus = 'pending_approval';
+      if (organization) {
+        user.organization = {
+          name: organization.name || '',
+          designation: organization.designation || '',
+          accreditationDocUrl: organization.accreditationDocUrl || '',
+        };
+      }
+      user.isOnboarded = true;
+    } else if (accountType === 'admin') {
+      const isDeployer = user.walletAddress.toLowerCase() === ADMIN_WALLET;
+      const isAuthorizedKey = adminSecretKey && adminSecretKey.trim() === ADMIN_SECRET;
+
+      if (!isDeployer && !isAuthorizedKey) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized: Admin account creation requires deployer wallet or valid Admin Secret Key.',
+        });
+      }
+      user.accountType = 'admin';
+      user.role = 'admin';
+      user.verifierStatus = 'approved';
+      user.isOnboarded = true;
+    }
+
+    if (name && name.trim()) {
+      user.name = name.trim();
+    }
+
+    await user.save();
+
+    const secret = process.env.JWT_SECRET || 'trustmesh-jwt-secret-key';
+    const token = jwt.sign(
+      {
+        id: user._id,
+        userId: user._id,
+        walletAddress: user.walletAddress,
+        role: user.role,
+        emailVerified: user.emailVerified,
+      },
+      secret,
+      { expiresIn: '7d' }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Onboarding completed successfully as ${accountType}.`,
+      token,
+      user: {
+        id: user._id,
+        walletAddress: user.walletAddress,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        role: user.role,
+        accountType: user.accountType,
+        verifierStatus: user.verifierStatus,
+        organization: user.organization,
+        isSuspended: Boolean(user.isSuspended),
+        suspensionReason: user.suspensionReason || '',
+        isOnboarded: user.isOnboarded,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Retrieve active authenticated session and account profile.
+ * GET /api/auth/me
+ */
+exports.getMe = async (req, res, next) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        id: user._id,
+        walletAddress: user.walletAddress,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        role: user.role,
+        accountType: user.accountType || null,
+        verifierStatus: user.verifierStatus || (user.role === 'verifier' ? 'approved' : 'none'),
+        organization: user.organization || {},
+        isSuspended: Boolean(user.isSuspended),
+        suspensionReason: user.suspensionReason || '',
+        isOnboarded: Boolean(user.isOnboarded && user.accountType),
       },
     });
   } catch (error) {

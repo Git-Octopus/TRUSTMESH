@@ -30,6 +30,43 @@ const UserSchema = new mongoose.Schema(
       enum: ['owner', 'verifier', 'admin'],
       default: 'owner',
     },
+    accountType: {
+      type: String,
+      enum: ['user', 'verifier', 'admin'],
+      default: 'user',
+    },
+    verifierStatus: {
+      type: String,
+      enum: ['none', 'pending_approval', 'approved', 'rejected', 'revoked'],
+      default: 'none',
+      index: true,
+    },
+    organization: {
+      name: { type: String, default: '' },
+      designation: { type: String, default: '' },
+      accreditationDocUrl: { type: String, default: '' },
+    },
+    isSuspended: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    suspensionReason: {
+      type: String,
+      default: '',
+    },
+    suspendedBy: {
+      type: String,
+      default: null,
+    },
+    suspendedAt: {
+      type: Date,
+      default: null,
+    },
+    isOnboarded: {
+      type: Boolean,
+      default: false,
+    },
     nonce: {
       type: String,
       default: null,
