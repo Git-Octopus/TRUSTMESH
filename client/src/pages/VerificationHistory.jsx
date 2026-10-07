@@ -1,62 +1,79 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import api from '../services/api';
+import Timeline from '../components/Timeline';
 
 export default function VerificationHistory() {
   const { claimId } = useParams();
   const [history, setHistory] = useState([]);
+  const [claim, setClaim] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchHistory();
+    fetchHistoryData();
   }, [claimId]);
 
-  const fetchHistory = async () => {
+  const fetchHistoryData = async () => {
     try {
       setLoading(true);
-      const res = await api.get(`/verification/history/${claimId}`);
+
+      // Fetch history events
+      const res = await api.get(claimId ? `/verification/history/${claimId}` : '/verification/history');
       setHistory(res.data.history || []);
+
+      // If specific claim ID, fetch claim details too
+      if (claimId) {
+        try {
+          const claimRes = await api.get(`/claims/${claimId}`);
+          setClaim(claimRes.data.claim);
+        } catch (e) {
+          // Non-fatal
+        }
+      }
     } catch (err) {
-      console.error(err);
+      console.error('Failed to fetch verification audit trail:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) return <div className="text-center p-8">Loading history...</div>;
-  if (history.length === 0) return <div className="text-center p-8 text-gray-400">No verification history found for this claim.</div>;
-
   return (
-    <div className="max-w-3xl mx-auto">
-      <h2 className="text-2xl font-bold mb-6">Verification History</h2>
-      
-      <div className="bg-tm-charcoal p-6 rounded-lg border border-gray-800 shadow-xl relative">
-        <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-gray-700"></div>
-        <div className="space-y-8 relative">
-          {history.map((event, index) => (
-            <div key={index} className="flex gap-4">
-              <div className="w-4 h-4 mt-1 rounded-full bg-tm-blue relative z-10 shrink-0"></div>
-              <div className="flex-1 bg-slate-900 p-4 rounded border border-gray-700">
-                <div className="flex justify-between items-start mb-2">
-                  <span className={`px-2 py-1 text-xs rounded-full font-semibold ${event.status === 'VERIFIED' ? 'bg-tm-verified text-white' : event.status === 'REJECTED' || event.status === 'REVOKED' ? 'bg-tm-rejected text-white' : 'bg-gray-700 text-gray-300'}`}>
-                    {event.status}
-                  </span>
-                  <span className="text-sm text-gray-500">
-                    {new Date(event.createdAt || event.blockchainTimestamp * 1000).toLocaleString()}
-                  </span>
-                </div>
-                <p className="text-sm text-gray-300 mb-2">{event.comments}</p>
-                {event.verifierWallet && (
-                  <p className="text-xs text-gray-500 font-mono">Actor: {event.verifierWallet}</p>
-                )}
-                {event.transactionHash && (
-                  <p className="text-xs text-tm-teal font-mono mt-1">Tx: {event.transactionHash}</p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+    <div className="max-w-3xl mx-auto pb-16">
+      <div className="flex items-center justify-between mb-6">
+        <Link
+          to={claimId ? `/claim/${claimId}` : '/claims'}
+          className="text-xs font-medium text-slate-400 hover:text-white"
+        >
+          ← Back to {claimId ? 'Claim Proof' : 'Claims'}
+        </Link>
       </div>
+
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-8 mb-8 shadow-xl">
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight mb-2">
+          Verification History & Audit Trail
+        </h1>
+        <p className="text-sm text-slate-400">
+          Chronological timeline of state transitions, evidence verifications, and cryptographic attestations.
+        </p>
+
+        {claim && (
+          <div className="mt-4 pt-4 border-t border-slate-800 text-xs">
+            <span className="text-slate-500 font-mono">Claim Subject: </span>
+            <span className="text-white font-bold">{claim.title}</span>
+            <span className="text-slate-400 font-mono ml-2">({claim.type})</span>
+          </div>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-16">
+          <div className="w-8 h-8 border-3 border-tm-blue border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : (
+        <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-xl">
+          <Timeline events={history} />
+        </div>
+      )}
     </div>
   );
 }

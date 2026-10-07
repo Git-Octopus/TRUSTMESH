@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: trustmesh-mongo
+    restart: unless-stopped
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - trustmesh-net
+
+  blockchain:
+    build:
+      context: ./blockchain
+      dockerfile: Dockerfile
+    container_name: trustmesh-blockchain
+    restart: unless-stopped
+    ports:
+      - '8545:8545'
+    networks:
+      - trustmesh-net
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: trustmesh-server
+    restart: unless-stopped
+    ports:
+      - '5000:5000'
+    depends_on:
+      - mongo
+      - blockchain
+    environment:
+      PORT: 5000
+      MONGO_URI: mongodb://mongo:27017/trustmesh
+      RPC_URL: http://blockchain:8545
+      CONTRACT_ADDRESS: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+      JWT_SECRET: trustmesh_docker_secret_31337
+      OTP_EXPIRY_MINUTES: 5
+      MAX_UPLOAD_MB: 5
+      EMAIL_HOST: ${EMAIL_HOST:-smtp.gmail.com}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_USER: ${EMAIL_USER:-}
+      EMAIL_PASS: ${EMAIL_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+    env_file:
+      - ./server/.env
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - trustmesh-net
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: trustmesh-client
+    restart: unless-stopped
+    ports:
+      - '5173:80'
+    depends_on:
+      - server
+    networks:
+      - trustmesh-net
+
+volumes:
+  mongo_data:
+  uploads_data:
+
+networks:
+  trustmesh-net:
+    driver: bridge

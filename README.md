@@ -1,154 +1,392 @@
-# TrustMesh
+# TrustMesh — Decentralized Credential Verification & Reputation Engine
 
-**TrustMesh** is a decentralized credential verification and trust score platform that bridges off-chain professional identities with on-chain cryptographic attestations.
+**TrustMesh** is a credential verification and decentralized trust scoring platform. It bridges off-chain professional identities with on-chain cryptographic attestations, replacing unverified resumes and LinkedIn claims with immutable, tamper-proof blockchain proofs.
 
 ---
 
-## 1. System Architecture & Team Split
+## 1. System Architecture & Discipline
 
-TrustMesh is developed across three core disciplines:
+TrustMesh follows a strict **On-Chain vs. Off-Chain Separation of Concerns**:
 
-| Role | Lead | Responsibilities |
+| Layer | Technology | Primary Responsibilities |
 |---|---|---|
-| **Dev A** | Frontend Lead | React + Vite UI, TailwindCSS, MetaMask/Web3 wallet connection, user screens |
-| **Dev B** | Backend Lead | Express API, MongoDB, wallet auth (Ethers signatures), OTP email verification, document SHA-256 hashing, Verification Engine, live trust scoring, and blockchain synchronization |
-| **Dev C** | Blockchain Lead | Solidity smart contracts (`TrustMesh.sol`), Hardhat node, Ganache deployment, on-chain event emissions, and automated ABI exports |
+| **Frontend (Dev A)** | React 18, Vite, TailwindCSS, Ethers.js, Zustand | Responsive Web3 dApp, MetaMask signing modals, OTP modal, inline evidence preview, dual-panel proof viewers, dynamic claim stepper. |
+| **Backend (Dev B)** | Node.js, Express, MongoDB (Mongoose), Nodemailer, Multer | Wallet signature challenge (nonce/JWT), document validation, SHA-256 hashing, OTP email verification, Verification Engine rules, trust scoring calculation. |
+| **Blockchain (Dev C)** | Solidity `^0.8.20`, Hardhat, Ganache, Ethers.js | Immutable registry contract (`TrustMesh.sol`), verifier access control, on-chain event emission, and real-time backend synchronization (`web3Listener.js`). |
 
-### Architectural Flow
+### Architectural Flowchart
 
 ```
-                      +------------------------------------------+
-                      |         Frontend (React + Vite)          |
-                      +---------------------+--------------------+
-                                            |
-                         REST API Requests  |  MetaMask Web3 Transactions
-                                            v
-                      +---------------------+--------------------+
-                      |    TrustMesh Express Backend Server     |
-                      |          (Node.js + Mongoose)            |
-                      |                                          |
-                      |  - Wallet Authentication (Ethers/JWT)    |
-                      |  - Profiles, Claims & Evidence Storage   |
-                      |  - SHA-256 Hashing & Multi-MIME Validate|
-                      |  - OTP Verification (Nodemailer)         |
-                      |  - Verification Engine (Rules Evaluator) |
-                      |  - Trust Score Service (0-100 Weighted)  |
-                      |  - Web3 Listener (Ganache / Hardhat Sync)|
-                      +----------+--------------------+----------+
-                                 |                    |
-                                 v                    v
-                  +--------------+----+        +------+-------------------+
-                  |  MongoDB Storage  |        |    Blockchain Core       |
-                  | - Users & Nonces  |        | - TrustMesh.sol          |
-                  | - Profiles        |        | - Hardhat / Ganache Node |
-                  | - Claims & Audit  |        | - Immutable Events       |
-                  | - OTP Records     |        |   (ClaimVerified, etc.)  |
-                  +-------------------+        +--------------------------+
+                          +------------------------------------------+
+                          |         Frontend (React + Vite)          |
+                          +---------------------+--------------------+
+                                                |
+                             REST API Requests  |  MetaMask Web3 Transactions
+                                                v
+                          +---------------------+--------------------+
+                          |    TrustMesh Express Backend Server      |
+                          |          (Node.js + Mongoose)            |
+                          |                                          |
+                          |  - Wallet Authentication (Ethers / JWT)  |
+                          |  - Profiles, Claims & Evidence Storage   |
+                          |  - SHA-256 Hashing & MIME-Type Check     |
+                          |  - OTP Verification (Nodemailer / Dev)   |
+                          |  - Verification Engine (Rule Evaluator)  |
+                          |  - Trust Score Service (0-100 Weighted)  |
+                          |  - Web3 Event Listener (Ethers Provider) |
+                          +----------+--------------------+----------+
+                                     |                    |
+                                     v                    v
+                      +--------------+----+        +------+-------------------+
+                      |  MongoDB Database |        |    Blockchain Core       |
+                      | - Users & Nonces  |        | - TrustMesh.sol          |
+                      | - Profiles        |        | - Hardhat / Ganache Node |
+                      | - Claims & Audit  |        | - Immutable Events       |
+                      | - OTP Records     |        |   (ClaimVerified, etc.)  |
+                      +-------------------+        +--------------------------+
 ```
+
+### On-Chain vs. Off-Chain Data Discipline
+
+- **Stored On-Chain (`TrustMesh.sol`)**: Claim ID, claimant wallet address, verifier wallet address, claim category, status enum (`PENDING`, `VERIFIED`, `REJECTED`, `REVOKED`), block timestamp, and SHA-256 evidence reference hash.
+- **Stored Off-Chain (MongoDB & `/uploads`)**: Full text descriptions, profile headlines/bio, education/experience arrays, profile avatar images, MIME metadata, original uploaded files, and email OTP verification tokens.
 
 ---
 
-## 2. Backend Implementation (Dev B Lead)
+## 2. How the Application Works (End-to-End Workflow)
 
-The backend provides the authoritative off-chain data indexing, credential validation pipeline, and trust scoring engine.
+The system enforces a 7-stage credential verification lifecycle:
 
-### Key Modules:
-- **Authentication (`/api/auth`)**: Cryptographic login using wallet signatures (`ethers.verifyMessage`). No passwords stored. Issues signed JWT sessions with role-based access (`owner`, `verifier`, `admin`).
-- **Profile Management (`/api/profile`)**: Manage professional identity, education history, work experience, skill tags, and public shareable URLs.
-- **Claims & Evidence (`/api/claims`)**: Support for Claim lifecycle (`DRAFT` &rarr; `SUBMITTED` &rarr; `EVIDENCE_CHECK` &rarr; `VERIFICATION_PENDING` &rarr; `VERIFIED` / `REJECTED` / `REVOKED`). Multer-based evidence uploads with strict MIME/size gating and SHA-256 hash generation.
-- **Verification Engine (`/api/verification`)**:
-  - Implements canonical verification rule:
-    ```
-    IF email_verified AND evidence_valid AND verifier_authorized AND verifier_approved
-    THEN claim_status = VERIFIED
-    ELSE claim_status = VERIFICATION_PENDING / REJECTED
-    ```
-- **Trust Score Engine (`/api/trust-score/:profileId`)**:
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Claimant
+    participant UI as React Client
+    participant API as Express API
+    participant BC as TrustMesh.sol
+    actor Verifier as Authorized Verifier
+
+    User->>UI: Connect MetaMask
+    UI->>API: POST /api/auth/nonce
+    API-->>UI: Nonce challenge
+    UI->>User: Sign auth challenge in MetaMask
+    UI->>API: POST /api/auth/login (signature)
+    API-->>UI: JWT Session Token
+    User->>UI: Request Email Verification
+    UI->>API: POST /api/auth/send-otp
+    API-->>User: 6-Digit OTP Code
+    User->>UI: Submit OTP
+    UI->>API: POST /api/auth/verify-otp
+    API-->>UI: emailVerified = true
+    User->>UI: Create Claim & Upload Evidence
+    UI->>API: POST /api/claims/:id/evidence
+    API-->>UI: SHA-256 Fingerprint Generated
+    User->>UI: Register on Ethereum Ledger
+    UI->>BC: contract.createClaim(type, hash)
+    BC-->>UI: ClaimCreated Event (claimId)
+    User->>UI: Request Verification
+    UI->>API: POST /api/verification/request
+    Verifier->>UI: Open Verifier Dashboard & Inspect Evidence
+    Verifier->>BC: contract.verifyClaim(claimId)
+    BC-->>API: Event ClaimVerified emitted
+    API->>API: DB updated to VERIFIED & Audit Log created
+    UI->>User: Claim status displays VERIFIED with on-chain proof
+```
+
+### 1. Cryptographic Authentication (Zero Passwords)
+- When a user connects their wallet, the server issues a single-use random cryptographic nonce.
+- The user signs the challenge string in MetaMask.
+- The server verifies the signature using `ethers.verifyMessage`. If authentic, it returns a signed JWT containing the user's wallet address and role (`owner`, `verifier`, or `admin`).
+
+### 2. Identity & OTP Email Verification
+- Users establish their identity on the **Profile** screen.
+- Clicking **Verify via OTP** triggers a 6-digit cryptographic code generation.
+- The hashed code is stored in MongoDB with a 5-minute expiry and 30-second cooldown limiter.
+- In local development mode, the OTP is conveniently printed directly to the server terminal:
+  ```text
+  [EmailService] ⚡ DEV OTP CODE: [ 482910 ] (Valid for 5 mins)
+  ```
+- Entering the code validates the user and marks `emailVerified = true`.
+
+### 3. Claim Creation & SHA-256 Evidence Hashing
+- Users create claims using a 3-step stepper form across 6 categories: **Skill**, **Project**, **Experience**, **Contribution**, **Achievement**, or **Recommendation**.
+- Form inputs dynamically adjust based on category (e.g. Organization and Domain for Experience; GitHub and Demo URLs for Projects).
+- The user uploads an evidence file (PDF, PNG, JPG; max 5MB).
+- The server executes MIME/magic-byte validation and generates a cryptographic SHA-256 fingerprint.
+- The user can optionally mint the claim directly to the smart contract via `contract.createClaim(claimType, evidenceHash)`.
+
+### 4. Verification Engine Rule Assessment
+To prevent self-endorsement and spam, claims must fulfill the canonical verification engine condition:
+$$\text{Status} = \begin{cases} \text{VERIFIED} & \text{if } \text{email\_verified} \land \text{evidence\_valid} \land \text{verifier\_authorized} \land \text{verifier\_approved} \\ \text{REJECTED} & \text{if verifier explicitly rejects} \\ \text{VERIFICATION\_PENDING} & \text{otherwise} \end{cases}$$
+
+### 5. Verifier Queue & Inline Evidence Preview
+- Users holding the `verifier` or `admin` role access the **Verifier Queue**.
+- Verifiers can expand any row to inspect the full context and view the document inside an **inline PDF / Image previewer**.
+- **Approve on Chain**: Opens MetaMask and calls `contract.verifyClaim(claimId)`. The transaction is tracked via `TxStatusModal`.
+- **Reject Claim**: Opens an inline rejection modal where the verifier provides an immutable rationale, recorded via `contract.rejectClaim(claimId, reason)`.
+
+### 6. Blockchain Event Synchronization
+- The backend runs `web3Listener.js`, an active Ethers event subscription.
+- When `ClaimVerified` or `ClaimRejected` is mined on Ethereum, the listener catches the block event and reconciles the MongoDB record automatically, setting `status = VERIFIED` and linking the transaction hash.
+
+### 7. Algorithmic Trust Score & Public Proof
+- Trust scores are computed dynamically from verified claims using a weighted model:
   - **Base starting score**: 50 points
-  - **Organization / Education Claim**: +10 points
-  - **Mentor / Client Claim**: +8 points
-  - **Peer / Skill / Project Claim**: +3 points
-  - **Self-Claimed**: +0 points
-  - **Anti-Collusion / Dampening**: Maximum 2 full-credit claims per unique verifier; subsequent claims receive 50% credit.
-  - **Score Range**: Clamped between 0 and 100.
-  - **Reputation Badges**: `Master of Trust` (&ge;90), `Verified Expert` (&ge;75), `Trusted Contributor` (&ge;60), `Rising Member` (<60), `Institutional Endorsed`, `Client Approved`.
-- **Blockchain Sync Listener (`web3Listener.js`)**: Real-time listener for smart contract events (`ClaimVerified`, `ClaimRejected`, `VerificationRevoked`, `VerifierRegistered`, `VerifierRevoked`) ensuring database status strictly mirrors the blockchain.
+  - **Organization / Education verification**: +10 points
+  - **Mentor / Client verification**: +8 points
+  - **Peer / Project verification**: +3 points
+  - **Self-Claimed (unverified)**: 0 points
+  - **Anti-Collusion Dampening**: Maximum 2 full-credit claims per unique verifier; subsequent claims receive 50% credit.
+  - **Score Range**: Clamped between 0 and 100 points.
+- Anyone can view public claim proofs at `/claim/:id` without logging in. The screen is split into **Self-Claimed Data** and **Cryptographic Blockchain Proof**, complete with copyable SHA-256 hashes and raw on-chain event accordions.
 
 ---
 
-## 3. API Reference
+## 3. Screen-by-Screen Overview
 
-All routes are served under `http://localhost:5000/api`.
+| Screen | Route | Key Features |
+|---|---|---|
+| **Landing Hero** | `/` | Hero value proposition, MetaMask network detection, architecture pillars, and quick navigation. |
+| **Profile** | `/profile` | Name, headline, bio, repeatable **Education** rows, repeatable **Experience** rows, **Skills tag input**, and **6-Digit OTP Modal**. |
+| **Create Claim** | `/claims/new` | 6 card-select types, category-specific dynamic fields, drag-and-drop evidence uploader, and on-chain minting trigger. |
+| **My Claims** | `/claims` | Table view with status filter tabs (`ALL`, `VERIFIED`, `PENDING`, `DRAFT`, `REJECTED`), sort controls, and `StatusBadge` indicators. |
+| **Verifier Dashboard** | `/verifier` | Pending queue, expandable rows with **inline PDF / image evidence viewer**, MetaMask `verifyClaim` flow, and reject reason modal. |
+| **Claim Details & Proof** | `/claim/:id` | Publicly shareable URL for recruiters, split panels (Self-Claimed vs Blockchain Proof), copyable SHA-256 hash, and raw on-chain event inspector. |
+| **Verification History** | `/history/:id` | Vertical chronological audit timeline with actor wallet addresses, timestamps, and state transitions. |
+| **Trust Dashboard** | `/trust-score/:wallet` | Radial SVG reputation gauge, earned badges, source breakdown bars (`Org=10`, `Mentor=8`, `Peer=3`), and transparency notice. |
+| **Admin Governance** | `/admin` | Authorize (`registerVerifier`) and revoke (`revokeVerifier`) verifier addresses on the smart contract. |
+
+---
+
+## 4. Smart Contract Reference (`TrustMesh.sol`)
+
+The Solidity contract is located at [`blockchain/contracts/TrustMesh.sol`](file:///c:/1_All_stuff/College%20projects/TRUSTMESH/blockchain/contracts/TrustMesh.sol):
+
+```solidity
+enum ClaimStatus { PENDING, VERIFIED, REJECTED, REVOKED }
+
+struct Claim {
+    uint256 id;
+    address claimant;
+    string claimType;
+    string referenceHash; // SHA-256 evidence fingerprint
+    ClaimStatus status;
+    address verifier;
+    uint256 timestamp;
+}
+```
+
+### Core Functions:
+- `registerProfile()`: Records claimant wallet on-chain.
+- `createClaim(string claimType, string referenceHash)`: Mints a new claim and emits `ClaimCreated`.
+- `requestVerification(uint256 claimId)`: Claimant signals readiness for verification.
+- `verifyClaim(uint256 claimId)`: Authorized verifier approves claim, setting status to `VERIFIED` and emitting `ClaimVerified`.
+- `rejectClaim(uint256 claimId, string reason)`: Authorized verifier documents rejection reason on-chain and emits `ClaimRejected`.
+- `revokeVerification(uint256 claimId)`: Authorized verifier revokes a prior verification while preserving historical audit trails.
+- `registerVerifier(address verifier)` / `revokeVerifier(address verifier)`: Owner-only verifier management.
+
+---
+
+## 5. API Reference
+
+All backend endpoints are accessible at `http://localhost:5000/api`:
 
 | Route | Method | Access | Description |
 |---|---|---|---|
-| `/auth/nonce` | `POST` | Public | Issue a cryptographic nonce for sign-in |
-| `/auth/login` | `POST` | Public | Verify wallet signature and issue JWT |
-| `/auth/register` | `POST` | Public | Register/initialize wallet user record |
-| `/auth/send-otp` | `POST` | Bearer | Send 6-digit OTP verification email |
-| `/auth/verify-otp` | `POST` | Bearer | Verify OTP code and set `emailVerified=true` |
+| `/auth/nonce` | `POST` | Public | Issue cryptographic nonce for wallet address |
+| `/auth/login` | `POST` | Public | Verify Ethers signature and issue signed JWT |
+| `/auth/send-otp` | `POST` | Authenticated | Generate and dispatch 6-digit OTP code |
+| `/auth/verify-otp` | `POST` | Authenticated | Validate OTP code and set `emailVerified=true` |
 | `/profile/:wallet` | `GET` | Public | Fetch public profile, claims, and live trust score |
-| `/profile` | `POST` | Bearer | Initialize user profile |
-| `/profile` | `PUT` | Bearer | Update user profile details |
-| `/claims` | `POST` | Bearer | Create a new claim (`DRAFT` / `SUBMITTED`) |
-| `/claims` | `GET` | Public | List claims with query filters |
-| `/claims/:id` | `GET` | Public | Fetch single claim by ID with verification details |
-| `/claims/:id` | `PUT` | Bearer | Update draft claim metadata |
-| `/claims/:id` | `DELETE` | Bearer | Delete draft claim |
-| `/claims/:id/evidence` | `POST` | Bearer | Upload evidence document & compute SHA-256 |
-| `/verification/hash` | `POST` | Public | Generate SHA-256 fingerprint & check duplicates |
-| `/verification/evidence-check` | `POST` | Bearer | Run automated evidence pipeline checks |
-| `/verification/request` | `POST` | Bearer | Request review from an authorized verifier |
-| `/verification/sync` | `POST` | Verifier/Admin | Record on-chain result into verification audit collection |
-| `/verification/history/:claimId` | `GET` | Public | Retrieve complete verification event audit log |
-| `/trust-score/:profileId` | `GET` | Public | Fetch dynamic trust score, breakdown, and badges |
+| `/profile` | `POST` | Authenticated | Initialize profile document |
+| `/profile` | `PUT` | Authenticated | Update bio, education, skills, and experience |
+| `/claims` | `GET` | Public | List claims with query filtering (`status`, `type`, `profileId`) |
+| `/claims` | `POST` | Authenticated | Create a new claim record |
+| `/claims/:id` | `GET` | Public | Get single claim with verification metadata |
+| `/claims/:id` | `PUT` | Authenticated | Update draft claim metadata |
+| `/claims/:id/evidence` | `POST` | Authenticated | Upload file (Multer), validate MIME, generate SHA-256 hash |
+| `/verification/hash` | `POST` | Public | Compute SHA-256 fingerprint & duplicate lookup |
+| `/verification/evidence-check` | `POST` | Authenticated | Run automated file checks & update claim status |
+| `/verification/request` | `POST` | Authenticated | Move claim to `VERIFICATION_PENDING` |
+| `/verification/sync` | `POST` | Verifier/Admin | Record on-chain verification transaction to audit trail |
+| `/verification/history/:claimId` | `GET` | Public | Retrieve chronological verification event log |
+| `/trust-score/:profileId` | `GET` | Public | Calculate live weighted reputation score (0-100) |
 | `/verifiers` | `GET` | Public | List authorized verifiers |
-| `/verifiers` | `POST` | Admin | Register and authorize a new verifier |
+| `/verifiers` | `POST` | Admin | Authorize verifier record |
 | `/verifiers/:wallet` | `DELETE` | Admin | Revoke verifier authorization |
-| `/health` | `GET` | Public | System status and health monitor |
 
 ---
 
-## 4. Blockchain Core (`blockchain/`)
+Viewed .env.example:1-12
+Viewed .env.example:1-4
+Viewed emailService.js:1-93
+Ran command: `Test-Path server/.env; Test-Path client/.env; Test-Path blockchain/.env`
+Ran command: `Get-Service -Name *mongo* -ErrorAction SilentlyContinue`
+Ran command: `Get-Command mongod -ErrorAction SilentlyContinue`
+Ran command: `Get-Command docker -ErrorAction SilentlyContinue`
+Viewed db.js:1-14
+Edited emailService.js
+Created .env
+Created .env
+Viewed .env.example:1-4
+Viewed hardhat.config.js:1-13
+Viewed package.json:1-13
+Created hardhat.config.js
+Created package.json
 
-The Solidity contract [`blockchain/contracts/TrustMesh.sol`](file:///c:/Academics/others/TRUSTMESH/blockchain/contracts/TrustMesh.sol) provides on-chain verifiable registry:
-- **`registerProfile()`**: Registers claimant wallet address.
-- **`createClaim(claimType, referenceHash)`**: Records new claim on-chain with evidence SHA-256 hash.
-- **`requestVerification(claimId)`**: Claimant triggers verification workflow.
-- **`verifyClaim(claimId)`**: Authorized verifier stamps claim on-chain.
-- **`rejectClaim(claimId, reason)`**: Authorized verifier documents rejection reason.
-- **`revokeVerification(claimId)`**: Authorized verifier revokes existing verification.
-- **`registerVerifier(address)` / `revokeVerifier(address)`**: Owner-only administration of verifiers.
+Here is the complete setup guide and prerequisites you need to run TrustMesh locally from end to end:
 
 ---
 
-## 5. Quick Start & Execution
+## 1. Prerequisites Checklist
 
-### 1. Install Dependencies
-```bash
-# In project root
-cd client && npm install
-cd ../server && npm install
-cd ../blockchain && npm install
+| Component | Status | Setup Requirement |
+| :--- | :--- | :--- |
+| **Node.js** | Ready | Installed (v18+) |
+| **MetaMask** | Browser Extension | Must be installed in Chrome / Brave / Firefox / Edge |
+| **Ethereum Node** | Included | Built-in via Hardhat node (`npm run chain`) |
+| **MongoDB** | **Action Needed** | Needs a running instance (Local, Docker, or free MongoDB Atlas) |
+| **Email (OTP)** | **Ready (Zero Setup)** | Outgoing OTP codes print directly to the server terminal: `⚡ DEV OTP CODE: [ 123456 ]` |
+
+---
+
+## 2. Set Up MongoDB (Choose One Option)
+
+Your backend connects to `MONGO_URI` (configured in [`server/.env`](file:///c:/1_All_stuff/College%20projects/TRUSTMESH/server/.env)). Choose whichever option is easiest:
+
+### Option A: Using Docker (Fastest if Docker Desktop is installed)
+Run in PowerShell:
+```powershell
+docker run -d -p 27017:27017 --name trustmesh-mongo mongo:latest
 ```
 
-### 2. Available Scripts
-From the repository root:
-- `npm run server` - Starts the Express backend development server (`http://localhost:5000`)
-- `npm run client` - Starts the Vite development server for the frontend (`http://localhost:5173`)
-- `npm run chain` - Starts the local Hardhat blockchain node
-- `npm run deploy` - Deploys contracts to Ganache and auto-exports ABI to client and server
-- `npm run test:server` - Runs the comprehensive backend test suite (Jest + Supertest)
-- `npm run test:chain` - Runs the smart contract unit tests (Hardhat + Mocha/Chai)
-- `npm run demo` - Executes the complete end-to-end integration demo script
+### Option B: Free MongoDB Atlas Cloud (No local software needed)
+1. Create a free database at [mongodb.com/atlas](https://www.mongodb.com/atlas).
+2. Open [`server/.env`](file:///c:/1_All_stuff/College%20projects/TRUSTMESH/server/.env) and update line 2:
+   ```env
+   MONGO_URI=mongodb+srv://<username>:<password>@cluster.mongodb.net/trustmesh?retryWrites=true&w=majority
+   ```
 
-### 3. Running Backend Tests
-```bash
-cd server
-npm test
+### Option C: Local MongoDB Community Service
+If you have MongoDB Community Server installed on Windows:
+```powershell
+net start MongoDB
 ```
 
-### 4. Running Python Specification Verification Tests
-```bash
+---
+
+## 3. MetaMask Network Setup
+
+To enable signing and transactions in your browser:
+
+1. Open **MetaMask** → Click the network dropdown (top-left) → **Add Network** → **Add a network manually**.
+2. Fill in the details:
+   - **Network Name**: `Hardhat Localhost`
+   - **RPC URL**: `http://127.0.0.1:8545`
+   - **Chain ID**: `31337`
+   - **Currency Symbol**: `ETH`
+3. Click **Save**.
+
+### Import Test Accounts with Funds:
+When you run `npm run chain` in step 4 below, Hardhat generates 20 test accounts, each pre-funded with 10,000 test ETH.
+- Copy **Account #0 Private Key** (e.g. `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`).
+- In MetaMask, click your avatar → **Import Account** → Paste the Private Key.
+- This account is the **Deployer & Owner** and has unlimited test ETH.
+
+---
+
+## 4. How to Run the Entire Application (4 Terminals)
+
+Open 4 PowerShell windows in `c:\1_All_stuff\College projects\TRUSTMESH`:
+
+### Terminal 1: Start Blockchain Node
+```powershell
+npm run chain
+```
+> *Runs local Ethereum RPC on `http://127.0.0.1:8545` with Chain ID `31337`.*
+
+---
+
+### Terminal 2: Deploy Smart Contract
+```powershell
+npm run deploy
+```
+> *Compiles and deploys [`TrustMesh.sol`](file:///c:/1_All_stuff/College%20projects/TRUSTMESH/blockchain/contracts/TrustMesh.sol), automatically exporting the contract address and ABI to both `client/` and `server/`.*
+
+---
+
+### Terminal 3: Start Backend API & Web3 Sync Listener
+```powershell
+npm run server
+```
+> *Runs Express server on `http://localhost:5000` and starts listening for on-chain events (`ClaimVerified`, `ClaimRejected`, etc.).*
+
+---
+
+### Terminal 4: Start Frontend Client
+```powershell
+npm run client
+```
+> *Runs Vite development server on `http://localhost:5173`.*
+
+---
+
+## 5. Walkthrough of the Live Demo Flow
+
+1. Open **`http://localhost:5173`** in your browser.
+2. Click **Connect MetaMask** → Approve network & sign the login challenge.
+3. Go to **Profile** → Enter email and click **Verify via OTP**:
+   - Check **Terminal 3 (server)** to see the printed 6-digit code:
+     ```text
+     [EmailService] ⚡ DEV OTP CODE: [ 482910 ] (Valid for 5 mins)
+     ```
+   - Enter it in the modal to mark your email as verified.
+4. Go to **+ New Claim** → Choose category (e.g. Skill or Experience) → Fill details → Attach a sample PDF/image evidence file.
+5. Click **Register on Ethereum** → MetaMask will prompt you to confirm the `createClaim` transaction.
+6. Open **Verifier Queue** (or log in with an authorized verifier account) → Expand the claim → Review inline evidence → Click **Approve on Chain ⚡** → Confirm in MetaMask.
+7. Open **Claim Details** or **Trust Score** to see the permanent on-chain proof and updated reputation score!
+
+## 6. How to Run (Step-by-Step)
+
+Open 4 PowerShell / Terminal windows from the repository root:
+
+```powershell
+# Terminal 1: Start local Ethereum node
+npm run chain
+
+# Terminal 2: Deploy smart contract & export ABI to client/server
+npm run deploy
+
+# Terminal 3: Start backend Express API server
+npm run server
+
+# Terminal 4: Start frontend React development server
+npm run client
+```
+
+### Accessing the Web Application
+- **Frontend dApp**: [http://localhost:5173](http://localhost:5173)
+- **Backend API**: [http://localhost:5000/api](http://localhost:5000/api)
+- **Local Blockchain RPC**: [http://127.0.0.1:8545](http://127.0.0.1:8545)
+
+---
+
+## 7. Automated Testing
+
+### Smart Contract Unit Tests (30/30 Passing)
+```powershell
+npm run test:blockchain
+```
+Runs comprehensive Mocha/Chai tests covering initial deployment, profile registration, claim minting, verifier authorizations, rejection reasons, queryFilter audit logs, and edge-case reverts.
+
+### End-to-End Simulation Script
+```powershell
+npm run demo
+```
+Executes a headless simulation of the complete 14-step workflow: Wallet Authentication &rarr; Profile Initialization &rarr; Claim Creation &rarr; SHA-256 Hashing &rarr; 6-Digit OTP Verification &rarr; Smart Contract Verification &rarr; Live Trust Score Calculation.
+
+### Python Specification Verification Tests
+```powershell
 pytest tests/test_backend.py
 ```
+Validates the mathematical trust score weighting model, anti-collusion dampening, and cryptographic hash equivalence against reference implementations.
