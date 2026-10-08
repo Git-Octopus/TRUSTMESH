@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
-import { useWallet } from '../hooks/useWallet';
+import { useWallet, isProfileCompleteAndVerified } from '../hooks/useWallet';
 import { useOtp } from '../hooks/useOtp';
 import StatusBadge from '../components/StatusBadge';
 import OtpInput from '../components/OtpInput';
 
 export default function UserProfilePage() {
-  const { walletAddress, profile, setProfile } = useWallet();
+  const { walletAddress, profile, setProfile, user, refreshSession } = useWallet();
   const [loading, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState(''); // 'saving' | 'saved' | 'error' | ''
   const [errorMessage, setErrorMessage] = useState('');
@@ -186,6 +186,7 @@ export default function UserProfilePage() {
       if (res.user) {
         useWallet.getState().setUser(res.user);
       }
+      await refreshSession();
       setTimeout(() => {
         setIsOtpModalOpen(false);
       }, 1200);
@@ -248,6 +249,8 @@ export default function UserProfilePage() {
     }
   };
 
+  const isStep1Done = isProfileCompleteAndVerified(user, 'user') || (Boolean(name?.trim()) && Boolean(isEmailVerified));
+
   if (loading && !profile) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
@@ -285,13 +288,23 @@ export default function UserProfilePage() {
             </span>
           )}
 
-          <Link
-            to={`/proof-report/${walletAddress}`}
-            className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-sky-400 hover:text-sky-300 font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all"
-          >
-            <span>📄</span>
-            <span className="hidden sm:inline">Proof Report</span>
-          </Link>
+          {isStep1Done ? (
+            <Link
+              to={`/proof-report/${walletAddress}`}
+              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-sky-400 hover:text-sky-300 font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all"
+            >
+              <span>📄</span>
+              <span className="hidden sm:inline">Proof Report</span>
+            </Link>
+          ) : (
+            <div
+              title="Complete your profile and email verification to unlock the Proof Report"
+              className="px-4 py-2.5 rounded-xl bg-slate-800/50 text-slate-500 border border-slate-800 font-bold text-xs flex items-center gap-1.5 cursor-not-allowed"
+            >
+              <span>🔒</span>
+              <span className="hidden sm:inline">Proof Report (Step 1 Required)</span>
+            </div>
+          )}
 
           <button
             type="button"
@@ -303,6 +316,24 @@ export default function UserProfilePage() {
           </button>
         </div>
       </div>
+
+      {/* Step 1 Mandatory Gate Notice Banner */}
+      {!isStep1Done && (
+        <div className="mb-6 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 flex items-start gap-3.5 shadow-lg animate-pulse">
+          <span className="text-2xl shrink-0 mt-0.5">🔒</span>
+          <div>
+            <div className="font-bold text-sm text-white flex items-center gap-2">
+              <span>Step 1 Required: Profile Information &amp; Email Verification</span>
+              <span className="text-[10px] font-mono uppercase bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded border border-amber-500/40">
+                Action Required
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+              Before submitting claims, calculating your decentralized Trust Score, or generating cryptographic Proof Reports, you must save your <strong>Full Name</strong> and verify your <strong>Email Address</strong> via OTP below.
+            </p>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSave} className="space-y-8">
         {/* Section 1: Basic Information */}

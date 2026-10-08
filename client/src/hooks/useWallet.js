@@ -12,6 +12,24 @@ export const normalizeRole = (role) => {
   return 'user';
 };
 
+/**
+ * Evaluates whether a user has completed Step 1 (Profile Creation + Email OTP Verification).
+ * Applicable to all 3 roles: 'user', 'verifier', 'admin'.
+ */
+export const isProfileCompleteAndVerified = (user, role = 'user') => {
+  if (!user) return false;
+  const canonicalRole = normalizeRole(role || user.role);
+  const hasEmail = Boolean(user.email && user.emailVerified);
+  const hasName = Boolean(user.name && user.name.trim().length > 0);
+
+  if (canonicalRole === 'verifier') {
+    const hasOrg = Boolean(user.organization?.name && user.organization.name.trim().length > 0);
+    return hasName && hasOrg && hasEmail;
+  }
+
+  return hasName && hasEmail;
+};
+
 export const useWallet = create(
   persist(
     (set, get) => ({

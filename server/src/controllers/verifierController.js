@@ -35,8 +35,14 @@ exports.getVerifiers = async (req, res, next) => {
  */
 exports.addVerifier = async (req, res, next) => {
   try {
-    const { walletAddress, name, email, organization } = req.body;
+    if (req.user && !req.user.emailVerified) {
+      return res.status(403).json({
+        success: false,
+        message: 'Administrator must verify their security email before performing governance actions.',
+      });
+    }
 
+    const { walletAddress, name, email, organization } = req.body;
     if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
       return res.status(400).json({
         success: false,
