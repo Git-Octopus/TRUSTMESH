@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { useWallet, isProfileCompleteAndVerified } from './hooks/useWallet';
 
 import Landing from './pages/Landing';
@@ -16,9 +16,13 @@ import ProofReport from './pages/ProofReport';
 
 import WalletConnectButton from './components/WalletConnectButton';
 import OnboardingModal from './components/OnboardingModal';
+import ThemeToggle from './components/ThemeToggle';
+import { useTheme } from './hooks/useTheme';
 
 function Navbar() {
   const { walletAddress, role, user, openOnboardingModal } = useWallet();
+  const location = useLocation();
+  const isLanding = location.pathname === '/';
 
   const isUser = !role || role === 'owner' || role === 'user';
   const isVerifier = role === 'verifier';
@@ -166,15 +170,24 @@ function Navbar() {
             </button>
           )}
 
-          <Link
-            to="/docs"
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-xs font-bold text-sky-400 hover:text-sky-300 transition-all shadow-sm"
-          >
-            <span>📖</span>
-            <span className="hidden sm:inline">Documentation</span>
-            <span className="sm:hidden">Docs</span>
-          </Link>
-          <WalletConnectButton />
+          {/* Show Documentation in navbar only when connected OR on non-landing pages */}
+          {(walletAddress || !isLanding) && (
+            <Link
+              to="/docs"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-xs font-bold text-sky-400 hover:text-sky-300 transition-all shadow-sm"
+            >
+              <span>📖</span>
+              <span className="hidden sm:inline">Documentation</span>
+              <span className="sm:hidden">Docs</span>
+            </Link>
+          )}
+
+          <ThemeToggle />
+
+          {/* On Landing page when not connected, the hero section already provides the prominent Connect button */}
+          {(walletAddress || !isLanding) && (
+            <WalletConnectButton />
+          )}
         </div>
       </div>
     </nav>
@@ -210,6 +223,7 @@ function ProtectedRoute({ children, allowedRoles }) {
 
 export default function App() {
   const { user } = useWallet();
+  useTheme(); // Initialize root theme class on mount
 
   return (
     <BrowserRouter>
@@ -308,12 +322,9 @@ export default function App() {
               <span>•</span>
               <span>Decentralized Credential Verification</span>
             </div>
-            <div className="flex items-center gap-4 text-slate-400">
-              <Link to="/docs" className="text-sky-400 hover:text-sky-300 transition-colors font-medium">
-                📖 Protocol Documentation
-              </Link>
-              <span>•</span>
-              <span className="font-mono text-[11px] text-slate-500">Contract: 0xe7f1...0512</span>
+            <div className="flex items-center gap-2 text-slate-400 font-mono text-[11px]">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
+              <span className="text-slate-500">Smart Contract: 0xe7f1...0512</span>
             </div>
           </div>
         </footer>
