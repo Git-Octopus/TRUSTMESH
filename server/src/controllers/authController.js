@@ -160,10 +160,13 @@ exports.sendOtp = async (req, res, next) => {
 
     await emailService.sendOtpEmail(email, otpCode);
 
+    const isLocalTransport = !process.env.EMAIL_HOST || !process.env.EMAIL_USER;
+
     return res.status(200).json({
       success: true,
       message: 'OTP verification code sent to your email address.',
       expiresAt,
+      ...(isLocalTransport ? { devOtp: otpCode } : {}),
     });
   } catch (error) {
     next(error);
@@ -261,21 +264,51 @@ exports.register = async (req, res, next) => {
         name: name ? name.trim() : '',
         email: email ? email.toLowerCase().trim() : '',
         role: role && ['owner', 'verifier', 'admin'].includes(role) ? role : 'owner',
+        organization: req.body.organization || {},
       });
       await user.save();
       await Profile.create({ userId: user._id });
     } else {
       if (name !== undefined) user.name = name.trim();
-      if (email !== undefined) user.email = email.toLowerCase().trim();
+      if (email !== undefined) {
+        const cleanEmail = email.toLowerCase().trim();
+        if (user.email && user.email !== cleanEmail) {
+          user.email = cleanEmail;
+          user.emailVerified = false;
+        } else if (!user.email) {
+          user.email = cleanEmail;
+        }
+      }
       if (role && ['owner', 'verifier', 'admin'].includes(role)) {
         user.role = role;
+      }
+      if (req.body.organization) {
+        user.organization = {
+          name: req.body.organization.name !== undefined ? req.body.organization.name : user.organization?.name || '',
+          designation: req.body.organization.designation !== undefined ? req.body.organization.designation : user.organization?.designation || '',
+          accreditationDocUrl: req.body.organization.accreditationDocUrl !== undefined ? req.body.organization.accreditationDocUrl : user.organization?.accreditationDocUrl || '',
+        };
       }
       await user.save();
     }
 
+    const secret = process.env.JWT_SECRET || 'trustmesh-jwt-secret-key';
+    const token = jwt.sign(
+      {
+        id: user._id,
+        userId: user._id,
+        walletAddress: user.walletAddress,
+        role: user.role,
+        emailVerified: user.emailVerified,
+      },
+      secret,
+      { expiresIn: '7d' }
+    );
+
     return res.status(200).json({
       success: true,
       message: 'User registered successfully.',
+      token,
       user: {
         id: user._id,
         walletAddress: user.walletAddress,
@@ -283,6 +316,7 @@ exports.register = async (req, res, next) => {
         email: user.email,
         emailVerified: user.emailVerified,
         role: user.role,
+        organization: user.organization || {},
       },
     });
   } catch (error) {

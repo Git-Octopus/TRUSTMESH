@@ -198,6 +198,12 @@ exports.syncVerification = async (req, res, next) => {
 
     // Look up verifier user in DB if exists
     const verifierUser = await User.findOne({ walletAddress: wallet });
+    if (verifierUser && !verifierUser.emailVerified && req.user?.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Institutional verifier must verify their official email before attesting claims.',
+      });
+    }
     const isVerifierAuthorized = verifierUser ? ['verifier', 'admin'].includes(verifierUser.role) : true;
 
     // Apply verification engine rule:

@@ -19,6 +19,15 @@ exports.createClaim = async (req, res, next) => {
       });
     }
 
+    // Step 1 Enforcement: Check profile completion and email verification
+    const user = await User.findById(userId);
+    if (!user || !user.name || !user.email || !user.emailVerified) {
+      return res.status(403).json({
+        success: false,
+        message: 'Step 1 Incomplete: Profile creation and email verification are required before publishing claims.',
+      });
+    }
+
     const { title, type, description, evidenceUrl, evidenceHash, status, onChainClaimId } = req.body;
 
     if (!title || !type) {
